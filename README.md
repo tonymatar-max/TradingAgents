@@ -31,3 +31,12 @@ Entry is at the next bar's open after consensus; SL/TP are ATR-based (1.5x / 3x)
 - The demo numbers come from synthetic data with built-in trends and prove nothing about real profitability.
 - Trend and oscillator agents often disagree, so 80% consensus is rare by design: expect few trades.
 - Not financial advice; leveraged gold trading can lose more than you expect.
+
+## MetaTrader 5 demo bot
+Windows only. Open MT5, log in to a **DEMO** account, enable Tools > Options > Expert Advisors > "Allow algorithmic trading", and open XAUUSD in Market Watch.
+```
+pip install -r requirements.txt
+python -m xauusd_agents mt5 --symbol XAUUSD --timeframe H1                 # DRY-RUN: logs "would BUY", sends nothing
+python -m xauusd_agents mt5 --symbol XAUUSD --timeframe H1 --live-orders   # sends orders (demo account only)
+```
+Safeguards: refuses non-demo accounts; decides only on closed candles; one position at a time; 3% daily loss limit; every order has SL+TP; lot size rounded down to broker step. Use your broker's gold symbol name (e.g. `GOLD`, `XAUUSD.m`).
