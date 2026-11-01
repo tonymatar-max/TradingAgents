@@ -10,18 +10,26 @@ from .committee import Committee
 
 
 def sweep(df, start, split, thresholds=(0.7, 0.8, 0.9), sls=(1.0, 1.5, 2.0), tps=(2.0, 3.0, 4.0),
-          spread=0.30, risk=0.01, agents=None):
+          spread=0.30, risk=0.01, agents=None, htf=None, htf_min=0):
     base = Committee(agents)
     table = base.vote_table(df)  # causal: identical whether computed on full or truncated data
     split = pd.Timestamp(split)
     tr_df = df[df.index < split]
     rows = []
+    dirn = None
+    if htf is not None and htf_min:
+        from .htf import htf_direction
+        dirn = htf_direction(df, htf, htf_min)  # H4 direction, computed once (causal)
     for th, sl, tp in itertools.product(thresholds, sls, tps):
         com = Committee(agents, threshold=th)
         cfg = Config(sl_atr=sl, tp_atr=tp, spread=spread, risk_pct=risk)
+        sig = com.signals(df, table)
+        if dirn is not None:
+            from .htf import filter_signals
+            sig = filter_signals(sig, dirn)
         r = {}
         for tag, d, st in (("train", tr_df, start), ("test", df, split)):
-            _, _, s = run_backtest(d, com, cfg, start=st, table=table.loc[d.index])
+            _, _, s = run_backtest(d, com, cfg, start=st, signals=sig.loc[d.index])
             r[tag] = s
         if r["train"].get("trades", 0) < 20 or r["test"].get("trades", 0) < 20:
             continue  # too few trades to mean anything

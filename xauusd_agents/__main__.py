@@ -72,7 +72,8 @@ def main():
         if not (a.start and a.split):
             raise SystemExit("tfscan needs --from and --split")
         res = scan_mt5(a.symbol, a.tfs.split(","), a.start, a.end, a.split, thr=a.threshold, sl=a.sl_atr,
-                       tp=a.tp_atr, spread=a.spread, risk=a.risk, agents=agents)
+                       tp=a.tp_atr, spread=a.spread, risk=a.risk, agents=agents,
+                    htf=load_htf(df) if a.htf_min else None, htf_min=a.htf_min)
         print(f"\nSame settings on every timeframe: thr={a.threshold} sl={a.sl_atr} tp={a.tp_atr} spread={a.spread}")
         print(f"train = {a.start} -> {a.split}, test = {a.split} -> end (test never used to choose settings)\n")
         print(res.to_string(index=False))

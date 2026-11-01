@@ -65,3 +65,12 @@ class BotHtf(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SweepHtf(unittest.TestCase):
+    def test_sweep_runs_with_htf(self):
+        from xauusd_agents.optimize import sweep
+        ltf = synthetic_xauusd(4000)
+        r = sweep(ltf, "2024-02-01", "2024-04-01", thresholds=(0.9,), sls=(1.5,), tps=(2.0,),
+                  htf=resample_ohlc(ltf, "4h"), htf_min=6)
+        self.assertFalse(r.empty)

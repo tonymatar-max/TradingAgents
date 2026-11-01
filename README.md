@@ -93,3 +93,9 @@ python -m xauusd_agents backtest --csv XAUUSD_H1.csv --from 2026-01-01 --thresho
 python -m xauusd_agents mt5 --symbol XAUUSD --timeframe H1 --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --htf-min 7 --news --lots 0.1 --magic 26003
 ```
 `--lots` replaces risk-based sizing; every log line shows the dollar risk and % of equity. `--max-risk 0.10` (default) skips any trade whose stop would risk more than 10% of equity; `--max-risk 0` removes the cap. Add `--list-trades` to a backtest to print each trade and compare it with the bot log.
+
+## Long-history sweep with the H4 filter
+```
+python -m xauusd_agents optimize --csv XAUUSD_H1_long.csv --from 2022-01-01 --split 2024-07-01 --htf-min 6 --spread 0.30
+```
+Chooses threshold/stop/target on the earlier period and checks them on the later one, with the H4 filter on.
