@@ -41,18 +41,31 @@ def attribution(trades: pd.DataFrame, table: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def by_votes(trades: pd.DataFrame, table: pd.DataFrame) -> pd.DataFrame:
-    """Committee trades grouped by how many agents agreed at the signal candle (8, 9, 10...)."""
+def by_votes(trades: pd.DataFrame, table: pd.DataFrame, index=None, split=None, contract_oz: float = 100.0) -> pd.DataFrame:
+    """Committee trades grouped by how many agents agreed at the signal candle (8, 9, 10...).
+    Results in R (profit divided by the money risked at the stop) so volatile years and compounding don't distort it."""
     if trades.empty:
         return pd.DataFrame()
     sig_bar = (trades["entry_i"] - 1).to_numpy()
     n = (table.to_numpy()[sig_bar] == trades["dir"].to_numpy()[:, None]).sum(axis=1)
-    t = trades.assign(agreeing=n)
+    risk = (trades["entry"] - trades["sl"]).abs() * trades["lots"] * contract_oz
+    t = trades.assign(agreeing=n, R=trades.pnl / risk)
+    if split is not None and index is not None:
+        t["late"] = index[trades["entry_i"].to_numpy()] >= pd.Timestamp(split)
+
+    def stats(g):
+        w, lo = g[g.R > 0].R.sum(), -g[g.R <= 0].R.sum()
+        return {"trades": len(g), "win%": round(100 * (g.R > 0).mean(), 1), "avg_R": round(g.R.mean(), 3),
+                "pf_R": round(w / lo, 2) if lo else float("inf")}
+
     rows = []
     for k, g in t.groupby("agreeing"):
-        w, lo = g[g.pnl > 0].pnl.sum(), -g[g.pnl <= 0].pnl.sum()
-        rows.append({"agents_agreeing": int(k), "trades": len(g), "win%": round(100 * (g.pnl > 0).mean(), 1),
-                     "avg_pnl$": round(g.pnl.mean(), 2), "pf": round(w / lo, 2) if lo else float("inf")})
+        r = {"agents_agreeing": int(k), **stats(g)}
+        if "late" in t:
+            for tag, gg in (("early", g[~g.late]), ("late", g[g.late])):
+                st = stats(gg) if len(gg) else {"trades": 0, "win%": None, "avg_R": None, "pf_R": None}
+                r.update({f"n_{tag}": st["trades"], f"win%_{tag}": st["win%"], f"avgR_{tag}": st["avg_R"]})
+        rows.append(r)
     return pd.DataFrame(rows)
 
 
@@ -102,7 +115,7 @@ def backtest_report(df, agents, required, start, split, cfg: Config, dirn=None) 
     out = pd.DataFrame(rows)
     out.attrs["committee_pf"] = {w: _pf(base[w][2]) for w in base}
     out.attrs["committee_trades"] = base["all"][2].get("trades", 0)
-    out.attrs["by_votes"] = by_votes(base["all"][0], table)
+    out.attrs["by_votes"] = by_votes(base["all"][0], table, df.index, split, cfg.contract_oz)
     return out.sort_values("dPF_test", ascending=False)
 
 

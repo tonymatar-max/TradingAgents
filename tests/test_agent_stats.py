@@ -25,10 +25,15 @@ class T(unittest.TestCase):
 
     def test_by_votes(self):
         from xauusd_agents.agent_stats import by_votes
-        trades = pd.DataFrame({"entry_i": [1, 2, 3], "dir": [1, 1, 1], "pnl": [10, -5, 20]})
+        idx = pd.date_range("2026-01-01", periods=6, freq="h")
+        # risk per trade = |entry-sl| * lots * 100 = 100 -> R = pnl / 100
+        trades = pd.DataFrame({"entry_i": [1, 2, 3], "dir": [1, 1, 1], "pnl": [100.0, -100.0, 200.0],
+                               "entry": [100.0] * 3, "sl": [99.0] * 3, "lots": [1.0] * 3})
         table = pd.DataFrame({"A": [1, 1, 1, 0], "B": [1, 1, 0, 0], "C": [0, 1, 1, 0]})  # agreeing at bars 0,1,2: 2, 3, 2
-        r = by_votes(trades, table).set_index("agents_agreeing")
-        self.assertEqual(r.loc[2, "trades"], 2); self.assertEqual(r.loc[3, "trades"], 1); self.assertEqual(r.loc[3, "win%"], 0.0)
+        r = by_votes(trades, table, idx, idx[3]).set_index("agents_agreeing")
+        self.assertEqual(r.loc[2, "trades"], 2); self.assertEqual(r.loc[2, "avg_R"], 1.5)   # (+1R, +2R)
+        self.assertEqual(r.loc[3, "win%"], 0.0); self.assertEqual(r.loc[3, "avg_R"], -1.0)
+        self.assertEqual(r.loc[2, "n_early"], 1); self.assertEqual(r.loc[2, "n_late"], 1)   # entry_i 1 early, entry_i 3 late
 
     def test_signals_required_votes(self):
         t = pd.DataFrame({"a": [1, 1, -1], "b": [1, 1, -1], "c": [1, 0, -1]})
