@@ -41,6 +41,8 @@ def main():
     p.add_argument("--htf-mins", default="0,5,6,7,8,9", help="confluence: values of --htf-min to compare")
     p.add_argument("--balance", type=float, default=10_000.0, help="backtest: starting balance in USD")
     p.add_argument("--lots", type=float, default=None, help="backtest: fixed lot size per trade (1 lot = 100 oz); default = risk-based sizing")
+    p.add_argument("--leverage", type=float, default=0.0, help="backtest: account leverage, e.g. 100 for 1:100 (0 = ignore margin)")
+    p.add_argument("--stopout", type=float, default=0.5, help="backtest: broker stop-out level as fraction of margin (0.5 = 50%%)")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
@@ -137,7 +139,8 @@ def main():
     if a.htf_min:
         from .htf import filter_signals, htf_direction
         sigs = filter_signals(com.signals(df), htf_direction(df, load_htf(df), a.htf_min))
-    trades, _, stats = run_backtest(df, com, Config(balance=a.balance, risk_pct=a.risk, spread=a.spread, sl_atr=a.sl_atr, tp_atr=a.tp_atr, fixed_lots=a.lots), start=a.start, signals=sigs)
+    trades, _, stats = run_backtest(df, com, Config(balance=a.balance, risk_pct=a.risk, spread=a.spread, sl_atr=a.sl_atr, tp_atr=a.tp_atr, fixed_lots=a.lots,
+                                                  leverage=a.leverage, stopout_pct=a.stopout), start=a.start, signals=sigs)
     if a.start:
         print(f"Trading from {a.start} to {df.index[-1]} ({len(df)} candles loaded incl. warm-up)")
     print(f"Committee needs {com.required}/{len(com.agents)} agents to agree")

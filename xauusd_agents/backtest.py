@@ -21,6 +21,8 @@ class Config:
     spread: float = 0.30         # USD per oz, paid on entry
     contract_oz: float = 100.0   # 1 standard lot = 100 oz
     max_lots: float = 5.0
+    leverage: float = 0.0        # e.g. 100 = 1:100; 0 = margin not modelled
+    stopout_pct: float = 0.5     # broker closes when equity <= this fraction of used margin
     fixed_lots: float | None = None  # if set, ignore risk sizing and trade this many lots every time
 
 
@@ -56,16 +58,26 @@ def run_backtest(df: pd.DataFrame, committee: Committee | None = None, cfg: Conf
                 pnl = d * (exit_px - pos["entry"]) * pos["lots"] * cfg.contract_oz
                 equity = max(equity + pnl, 0.0)  # broker negative-balance protection: cannot go below 0
                 trades.append({**pos, "exit": exit_px, "exit_i": i, "pnl": pnl,
-                               "reason": "SL" if hit_sl else "TP"})
+                               "reason": ("STOPOUT" if pos["so"] else "SL") if hit_sl else "TP"})
                 pos = None
         if pos is None and equity > 0 and s[i - 1] != 0 and not np.isnan(a[i - 1]):
             d = int(s[i - 1])
             entry = o[i] + d * cfg.spread  # spread: fill is worse in both directions
             stop = cfg.sl_atr * a[i - 1]
             lots = cfg.fixed_lots if cfg.fixed_lots else position_size(equity, stop, cfg)
+            sl, so = entry - d * stop, False
+            if lots > 0 and cfg.leverage:
+                units = lots * cfg.contract_oz
+                margin = entry * units / cfg.leverage
+                if margin > equity:
+                    lots = 0                      # cannot afford the margin: broker rejects the order
+                else:                             # price at which the broker force-closes (stop-out)
+                    p_so = entry + d * (cfg.stopout_pct * margin - equity) / units
+                    if (d == 1 and p_so > sl) or (d == -1 and p_so < sl):
+                        sl, so = p_so, True       # stop-out comes before our own stop loss
             if lots > 0:
-                pos = {"dir": d, "entry": entry, "entry_i": i, "lots": lots,
-                       "sl": entry - d * stop, "tp": entry + d * cfg.tp_atr * a[i - 1]}
+                pos = {"dir": d, "entry": entry, "entry_i": i, "lots": lots, "equity_before": equity,
+                       "so": so, "sl": sl, "tp": entry + d * cfg.tp_atr * a[i - 1]}
         mtm = d * (c[i] - pos["entry"]) * pos["lots"] * cfg.contract_oz if pos else 0.0
         curve[i] = equity + mtm
     trades_df = pd.DataFrame(trades)
@@ -87,4 +99,7 @@ def summarize(trades: pd.DataFrame, curve: np.ndarray, cfg: Config) -> dict:
         "final_balance": round(float(curve[-1]), 2),
         "worst_trade": round(float(trades.pnl.min()), 2),
         "account_blown": bool(curve.min() <= 0),
+        "lowest_equity": round(float(curve.min()), 2),
+        "worst_loss_%_of_equity": round(float((-trades.pnl / trades.equity_before).max() * 100), 1),
+        "stop_outs": int((trades.reason == "STOPOUT").sum()),
     }

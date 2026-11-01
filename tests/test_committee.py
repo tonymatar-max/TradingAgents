@@ -74,3 +74,22 @@ class TestFixedLots(unittest.TestCase):
         self.assertIn("account_blown", st)
         t2, _, st2 = run_backtest(df, cfg=Config(balance=5000), start=df.index[300])
         self.assertFalse(st2["account_blown"])             # 1% risk sizing survives the same data
+
+
+class TestMargin(unittest.TestCase):
+    df = synthetic_xauusd(4000)
+
+    def test_cannot_afford_margin_means_no_trades(self):
+        # 1 lot of ~$2000 gold = $200k notional; at 1:20 needs ~$10k margin > $5k balance
+        t, _, st = run_backtest(self.df, cfg=Config(balance=5000, fixed_lots=1.0, leverage=20), start=self.df.index[300])
+        self.assertTrue(t.empty)
+
+    def test_stopout_triggers_before_far_stop_loss(self):
+        cfg = Config(balance=2500, fixed_lots=1.0, leverage=100, sl_atr=60, tp_atr=60)  # SL absurdly far
+        t, curve, st = run_backtest(self.df, cfg=cfg, start=self.df.index[300])
+        self.assertGreater(st["stop_outs"], 0)
+        self.assertGreaterEqual(curve.min(), 0)
+
+    def test_no_leverage_means_no_stopouts(self):
+        _, _, st = run_backtest(self.df, cfg=Config(balance=5000, fixed_lots=1.0), start=self.df.index[300])
+        self.assertEqual(st["stop_outs"], 0)
