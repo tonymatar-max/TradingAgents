@@ -138,3 +138,8 @@ python -m xauusd_agents agentstats --csv XAUUSD_H1_long.csv --from 2022-01-01 --
 python -m xauusd_agents agentstats --live        # same idea on the dry-run paper trades in logs\ (needs 30+ trades)
 ```
 Three views per agent: trading alone, committee trades with vs without its agreement, and the committee without it. Also prints committee quality by number of agreeing agents (8, 9, 10).
+
+## MetaTrader 5 Expert Advisor
+`mt5/XAUUSD_Consensus_EA.mq5` is a port of the bot to MQL5 (votes 8/9/10, per-agent switches and parameters, H4 filter, risk sizing,
+MT5 calendar news filter, dry-run paper trades, same event files for the portal). See `mt5/README.md`. `python -m xauusd_agents parity`
+compares the EA's logged votes with the Python agents; `tests/mql_mirror.py` proves the EA's algorithms equal the Python agents.

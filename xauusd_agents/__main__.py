@@ -12,7 +12,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal", "agentstats"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal", "agentstats", "parity"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -55,6 +55,7 @@ def main():
     p.add_argument("--sls", default="1.0,1.5,2.0", help="optimize: stop sizes in ATR to try")
     p.add_argument("--tps", default="2.0,3.0,4.0", help="optimize: target sizes in ATR to try")
     p.add_argument("--live", action="store_true", help="agentstats: analyse the live/dry-run paper trades in --logdir instead of a backtest")
+    p.add_argument("--events", help="parity: the EA's events.jsonl (Common\\Files\\xauusd_ea)")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
@@ -101,6 +102,21 @@ def main():
             print(f"Broker server clock = UTC{snapped / 3600:+g} (use --server-utc-offset {snapped / 3600:g} if you want to fix it)")
         else:
             print("Cannot tell: the last tick is old, so the market looks closed. Run this again while gold is trading.")
+        return
+
+    if a.cmd == "parity":
+        from .parity import compare, read_ea_candles
+        if not (a.csv and a.events):
+            raise SystemExit("parity needs --csv (candles of the SAME symbol/timeframe/broker) and --events")
+        res = compare(load_csv(a.csv), read_ea_candles(a.events))
+        print(f"EA logged {res['ea_candles']} candles; {res['compared']} found in the CSV")
+        if not res["compared"]:
+            raise SystemExit("No overlap: export the CSV AFTER the EA ran, from the same broker and timeframe.")
+        for k, v in res["agents"].items():
+            print(f"  {k:22s} agree {v['agree_%']:6.2f}%   mismatches {v['mismatches']}")
+        print(f"  committee vote counts identical on {res['same_vote_counts_%']}% of candles")
+        for t, name, ea_v, py_v in res["examples"][:10]:
+            print(f"  e.g. {t} {name}: EA {ea_v:+d} vs Python {py_v:+d}")
         return
 
     if a.cmd == "agentstats":
