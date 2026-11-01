@@ -158,6 +158,13 @@ def main():
         t["month"] = df.index[t.exit_i].to_period("M")
         m = t.groupby("month").pnl.agg(trades="count", net="sum", wins=lambda x: (x > 0).sum())
         print("\nMonthly (by exit date):\n" + m.round(2).to_string())
+        t["year"] = df.index[t.exit_i].year
+        def _pf(x):
+            return round(x[x > 0].sum() / abs(x[x <= 0].sum()), 2) if (x <= 0).any() and x[x <= 0].sum() else float("inf")
+        yr = t.groupby("year").pnl.agg(trades="count", net="sum", win_pct=lambda x: 100 * (x > 0).mean(), pf=_pf).round(2)
+        dd = df[df.index >= pd.Timestamp(a.start)] if a.start else df
+        yr["gold_%"] = (dd.groupby(dd.index.year).apply(lambda g: 100 * (g.close.iloc[-1] / g.open.iloc[0] - 1))).round(1)
+        print("\nBy year (gold_% = what plain buy&hold gold did that year):\n" + yr.to_string())
         print("\nBy direction:")
         print(t.assign(side=t["dir"].map({1: "LONG", -1: "SHORT"})).groupby("side").pnl
               .agg(trades="count", net="sum", avg="mean").round(2).to_string())
