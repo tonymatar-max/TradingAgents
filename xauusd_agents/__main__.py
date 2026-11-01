@@ -43,7 +43,7 @@ def main():
     p.add_argument("--lots", type=float, default=None, help="backtest: fixed lot size per trade (1 lot = 100 oz); default = risk-based sizing")
     p.add_argument("--leverage", type=float, default=0.0, help="backtest: account leverage, e.g. 100 for 1:100 (0 = ignore margin)")
     p.add_argument("--stopout", type=float, default=0.5, help="backtest: broker stop-out level as fraction of margin (0.5 = 50%%)")
-    p.add_argument("--max-risk", type=float, default=0.10, help="mt5 with --lots: skip trades whose stop would risk more than this fraction of equity (0 = no cap)")
+    p.add_argument("--max-risk", type=float, default=None, help="with --lots: skip trades whose stop would risk more than this fraction of equity, e.g. 0.10 (mt5 default 0.10; backtest default off; 0 = no cap)")
     p.add_argument("--list-trades", action="store_true", help="backtest: print every trade (to compare with the bot log)")
     a = p.parse_args()
 
@@ -109,7 +109,7 @@ def main():
         news = NewsFilter(a.news_before, a.news_after) if a.news else None
         Mt5Bot(mt5, a.symbol, a.timeframe, make_com(), news=news, risk_pct=a.risk,
                sl_atr=a.sl_atr, tp_atr=a.tp_atr, magic=a.magic,
-               htf_min=a.htf_min, htf_tf=a.htf_tf, fixed_lots=a.lots, max_risk_pct=a.max_risk, dry_run=not a.live_orders).run()
+               htf_min=a.htf_min, htf_tf=a.htf_tf, fixed_lots=a.lots, max_risk_pct=0.10 if a.max_risk is None else a.max_risk, dry_run=not a.live_orders).run()
         return
 
     df = synthetic_xauusd() if a.cmd == "demo" else load_csv(a.csv)
@@ -142,7 +142,7 @@ def main():
     if a.htf_min:
         from .htf import filter_signals, htf_direction
         sigs = filter_signals(com.signals(df), htf_direction(df, load_htf(df), a.htf_min))
-    trades, _, stats = run_backtest(df, com, Config(balance=a.balance, risk_pct=a.risk, spread=a.spread, sl_atr=a.sl_atr, tp_atr=a.tp_atr, fixed_lots=a.lots,
+    trades, _, stats = run_backtest(df, com, Config(balance=a.balance, risk_pct=a.risk, spread=a.spread, sl_atr=a.sl_atr, tp_atr=a.tp_atr, fixed_lots=a.lots, max_risk_pct=a.max_risk,
                                                   leverage=a.leverage, stopout_pct=a.stopout), start=a.start, signals=sigs)
     if a.start:
         print(f"Trading from {a.start} to {df.index[-1]} ({len(df)} candles loaded incl. warm-up)")

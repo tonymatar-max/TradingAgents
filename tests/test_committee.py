@@ -93,3 +93,13 @@ class TestMargin(unittest.TestCase):
     def test_no_leverage_means_no_stopouts(self):
         _, _, st = run_backtest(self.df, cfg=Config(balance=5000, fixed_lots=1.0), start=self.df.index[300])
         self.assertEqual(st["stop_outs"], 0)
+
+
+class TestRiskCap(unittest.TestCase):
+    def test_cap_skips_and_counts(self):
+        df = synthetic_xauusd(4000)
+        _, _, st = run_backtest(df, cfg=Config(balance=5000, fixed_lots=1.0, max_risk_pct=0.0001), start=df.index[300])
+        self.assertEqual(st.get("trades"), 0)
+        _, _, st2 = run_backtest(df, cfg=Config(balance=5000, fixed_lots=0.1, max_risk_pct=0.5), start=df.index[300])
+        self.assertGreater(st2["trades"], 0)
+        self.assertEqual(st2["skipped_by_risk_cap"], 0)

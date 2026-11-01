@@ -23,6 +23,7 @@ class Config:
     max_lots: float = 5.0
     leverage: float = 0.0        # e.g. 100 = 1:100; 0 = margin not modelled
     stopout_pct: float = 0.5     # broker closes when equity <= this fraction of used margin
+    max_risk_pct: float | None = None  # with fixed lots: skip trades whose stop risks more than this fraction of equity
     fixed_lots: float | None = None  # if set, ignore risk sizing and trade this many lots every time
 
 
@@ -45,7 +46,7 @@ def run_backtest(df: pd.DataFrame, committee: Committee | None = None, cfg: Conf
     a = ind.atr(df).to_numpy()
     o, h, l, c = (df[k].to_numpy() for k in ("open", "high", "low", "close"))
     s = sig.to_numpy()
-    equity, trades, pos = cfg.balance, [], None
+    equity, trades, pos, skipped = cfg.balance, [], None, 0
     curve = np.full(len(df), cfg.balance, dtype=float)
 
     for i in range(1, len(df)):
@@ -65,6 +66,9 @@ def run_backtest(df: pd.DataFrame, committee: Committee | None = None, cfg: Conf
             entry = o[i] + d * cfg.spread  # spread: fill is worse in both directions
             stop = cfg.sl_atr * a[i - 1]
             lots = cfg.fixed_lots if cfg.fixed_lots else position_size(equity, stop, cfg)
+            if lots > 0 and cfg.fixed_lots and cfg.max_risk_pct and lots * cfg.contract_oz * stop > cfg.max_risk_pct * equity:
+                skipped += 1                       # same rule as the live bot's --max-risk
+                lots = 0
             sl, so = entry - d * stop, False
             if lots > 0 and cfg.leverage:
                 units = lots * cfg.contract_oz
@@ -81,7 +85,10 @@ def run_backtest(df: pd.DataFrame, committee: Committee | None = None, cfg: Conf
         mtm = d * (c[i] - pos["entry"]) * pos["lots"] * cfg.contract_oz if pos else 0.0
         curve[i] = equity + mtm
     trades_df = pd.DataFrame(trades)
-    return trades_df, pd.Series(curve, index=df.index), summarize(trades_df, curve, cfg)
+    stats = summarize(trades_df, curve, cfg)
+    if cfg.max_risk_pct and cfg.fixed_lots:
+        stats["skipped_by_risk_cap"] = skipped
+    return trades_df, pd.Series(curve, index=df.index), stats
 
 
 def summarize(trades: pd.DataFrame, curve: np.ndarray, cfg: Config) -> dict:
