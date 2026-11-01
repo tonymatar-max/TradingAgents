@@ -87,3 +87,13 @@ class News(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TfScan(unittest.TestCase):
+    def test_scan_frames(self):
+        from xauusd_agents.tfscan import scan_frames
+        df = synthetic_xauusd(4000)
+        h4 = df.resample("4h").agg({"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
+        r = scan_frames({"H1": df, "H4": h4}, "2024-03-01", "2024-05-01")
+        self.assertEqual(list(r.tf), ["H1", "H4"])
+        self.assertIn("test_pf", r.columns)

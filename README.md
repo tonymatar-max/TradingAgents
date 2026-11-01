@@ -65,3 +65,9 @@ python -m xauusd_agents news                      # check the calendar feed pars
 python -m xauusd_agents mt5 --symbol XAUUSD --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --news
 ```
 `--news` blocks NEW entries 30 min before / after high-impact USD events (change with `--news-before/--news-after`). It fails closed if no calendar data is available. It is live-only: the free feed has no history, so it is not in backtests. Open positions keep their SL/TP.
+
+## Timeframe scan
+```
+python -m xauusd_agents tfscan --symbol XAUUSD --tfs M15,M30,H1,H4 --from 2026-01-01 --split 2026-07-01 --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --spread 0.30
+```
+Exports each timeframe from MT5 and runs the same settings on all of them (train / test split).

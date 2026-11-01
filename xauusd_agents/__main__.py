@@ -12,7 +12,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -34,11 +34,23 @@ def main():
     p.add_argument("--news-before", type=int, default=30, help="minutes before an event")
     p.add_argument("--news-after", type=int, default=30, help="minutes after an event")
     p.add_argument("--magic", type=int, default=26001, help="mt5: order tag; use a different one per bot when running several")
+    p.add_argument("--tfs", default="M15,M30,H1,H4", help="tfscan: comma list of timeframes")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
     agents = extended_agents(a.ib_bars, a.ib_start_hour) if a.agents == 12 else default_agents()
     make_com = lambda: Committee(agents, threshold=a.threshold)
+
+    if a.cmd == "tfscan":
+        from .tfscan import scan_mt5
+        if not (a.start and a.split):
+            raise SystemExit("tfscan needs --from and --split")
+        res = scan_mt5(a.symbol, a.tfs.split(","), a.start, a.end, a.split, thr=a.threshold, sl=a.sl_atr,
+                       tp=a.tp_atr, spread=a.spread, risk=a.risk, agents=agents)
+        print(f"\nSame settings on every timeframe: thr={a.threshold} sl={a.sl_atr} tp={a.tp_atr} spread={a.spread}")
+        print(f"train = {a.start} -> {a.split}, test = {a.split} -> end (test never used to choose settings)\n")
+        print(res.to_string(index=False))
+        return
 
     if a.cmd == "news":
         from .news import NewsFilter
