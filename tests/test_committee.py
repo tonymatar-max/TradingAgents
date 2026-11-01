@@ -63,3 +63,14 @@ class TestStart(unittest.TestCase):
         start = df.index[1800]
         trades, _, _ = run_backtest(df, start=start)
         self.assertTrue(trades.empty or (df.index[trades.entry_i] >= start).all())
+
+
+class TestFixedLots(unittest.TestCase):
+    def test_fixed_lot_and_blowup_protection(self):
+        df = synthetic_xauusd(4000)
+        t, curve, st = run_backtest(df, cfg=Config(balance=5000, fixed_lots=1.0), start=df.index[300])
+        self.assertTrue((t.lots == 1.0).all())
+        self.assertGreaterEqual(curve.min(), 0)            # never negative
+        self.assertIn("account_blown", st)
+        t2, _, st2 = run_backtest(df, cfg=Config(balance=5000), start=df.index[300])
+        self.assertFalse(st2["account_blown"])             # 1% risk sizing survives the same data

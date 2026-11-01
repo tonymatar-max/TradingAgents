@@ -21,6 +21,7 @@ class Config:
     spread: float = 0.30         # USD per oz, paid on entry
     contract_oz: float = 100.0   # 1 standard lot = 100 oz
     max_lots: float = 5.0
+    fixed_lots: float | None = None  # if set, ignore risk sizing and trade this many lots every time
 
 
 def position_size(equity: float, stop_dist: float, cfg: Config) -> float:
@@ -53,15 +54,15 @@ def run_backtest(df: pd.DataFrame, committee: Committee | None = None, cfg: Conf
             exit_px = pos["sl"] if hit_sl else pos["tp"] if hit_tp else None
             if exit_px is not None:
                 pnl = d * (exit_px - pos["entry"]) * pos["lots"] * cfg.contract_oz
-                equity += pnl
+                equity = max(equity + pnl, 0.0)  # broker negative-balance protection: cannot go below 0
                 trades.append({**pos, "exit": exit_px, "exit_i": i, "pnl": pnl,
                                "reason": "SL" if hit_sl else "TP"})
                 pos = None
-        if pos is None and s[i - 1] != 0 and not np.isnan(a[i - 1]):
+        if pos is None and equity > 0 and s[i - 1] != 0 and not np.isnan(a[i - 1]):
             d = int(s[i - 1])
             entry = o[i] + d * cfg.spread  # spread: fill is worse in both directions
             stop = cfg.sl_atr * a[i - 1]
-            lots = position_size(equity, stop, cfg)
+            lots = cfg.fixed_lots if cfg.fixed_lots else position_size(equity, stop, cfg)
             if lots > 0:
                 pos = {"dir": d, "entry": entry, "entry_i": i, "lots": lots,
                        "sl": entry - d * stop, "tp": entry + d * cfg.tp_atr * a[i - 1]}
@@ -82,5 +83,8 @@ def summarize(trades: pd.DataFrame, curve: np.ndarray, cfg: Config) -> dict:
         "profit_factor": round(w.sum() / abs(lo.sum()), 2) if len(lo) and lo.sum() else float("inf"),
         "net_pnl": round(float(trades.pnl.sum()), 2),
         "return_%": round(100 * (curve[-1] / cfg.balance - 1), 2),
-        "max_drawdown_%": round(float(100 * ((peak - curve) / peak).max()), 2),
+        "max_drawdown_%": round(float(100 * ((peak - curve) / np.where(peak > 0, peak, 1)).max()), 2),
+        "final_balance": round(float(curve[-1]), 2),
+        "worst_trade": round(float(trades.pnl.min()), 2),
+        "account_blown": bool(curve.min() <= 0),
     }

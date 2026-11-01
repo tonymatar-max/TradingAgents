@@ -81,3 +81,9 @@ python -m xauusd_agents confluence --csv XAUUSD_H1.csv --from 2026-01-01 --split
 python -m xauusd_agents backtest --csv XAUUSD_H1.csv --from 2026-01-01 --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --htf-min 6 --report
 python -m xauusd_agents mt5 --symbol XAUUSD --timeframe H1 --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --htf-min 6 --news
 ```
+
+## Fixed lot / small account test
+```
+python -m xauusd_agents backtest --csv XAUUSD_H1.csv --from 2026-01-01 --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --htf-min 7 --balance 5000 --lots 1 --report
+```
+`--balance` sets the start balance, `--lots` forces a fixed lot size (1 lot = 100 oz). Margin and stop-out levels are NOT modelled; the account is only stopped if equity reaches 0.
