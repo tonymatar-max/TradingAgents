@@ -33,7 +33,8 @@ def lot_size(equity, risk_pct, stop_dist, info) -> float:
 class Mt5Bot:
     def __init__(self, mt5, symbol="XAUUSD", timeframe="H1", committee=None, risk_pct=0.01,
                  sl_atr=1.5, tp_atr=3.0, max_daily_loss_pct=0.03, magic=26001, dry_run=True,
-                 bars=500, deviation=30, news=None, htf_min=0, htf_tf="H4", htf_agents=None, fixed_lots=None, max_risk_pct=0.10):
+                 bars=500, deviation=30, news=None, htf_min=0, htf_tf="H4", htf_agents=None, fixed_lots=None, max_risk_pct=0.10,
+                 server_utc_offset_hours=None, clock=time.time):
         self.mt5, self.symbol, self.dry_run = mt5, symbol, dry_run
         self.tf = getattr(mt5, f"TIMEFRAME_{timeframe}")
         self.committee = committee or Committee()
@@ -42,6 +43,9 @@ class Mt5Bot:
         self.last_bar, self.news = None, news
         self.htf_min, self.htf_tf, self.htf_agents = htf_min, htf_tf, htf_agents
         self.fixed_lots, self.max_risk_pct = fixed_lots, max_risk_pct
+        self.clock = clock                      # local UTC epoch seconds (injectable for tests)
+        self.fixed_offset = server_utc_offset_hours is not None
+        self.server_offset = None if server_utc_offset_hours is None else server_utc_offset_hours * 3600
 
     # ---- setup -------------------------------------------------------------
     def connect(self):
@@ -55,6 +59,15 @@ class Mt5Bot:
         if not m.symbol_select(self.symbol, True) or m.symbol_info(self.symbol) is None:
             raise RuntimeError(f"Symbol {self.symbol!r} not found - check your broker's gold symbol name.")
         log.info("Connected to DEMO account %s, balance %.2f, dry_run=%s", acc.login, acc.balance, self.dry_run)
+
+    def _learn_server_offset(self):
+        """Broker (server) clock minus UTC. Only trusted from a FRESH tick: a live tick differs from our UTC clock
+        by a whole number of half-hours (+- a few seconds); a frozen weekend tick does not."""
+        tick = self.mt5.symbol_info_tick(self.symbol)
+        off = tick.time - self.clock()
+        snapped = round(off / 1800) * 1800
+        if abs(off - snapped) < 30 and abs(snapped) <= 14 * 3600:
+            self.server_offset = snapped
 
     # ---- data --------------------------------------------------------------
     def fetch(self) -> pd.DataFrame:
@@ -87,9 +100,12 @@ class Mt5Bot:
             return "waiting for new candle"
         self.last_bar = bar_time
         bar_s = (df.index[-1] - df.index[-2]).total_seconds()
-        # compare in broker/server time: tick.time is the server clock, same clock as candle times
-        now_s = self.mt5.symbol_info_tick(self.symbol).time
-        age = now_s - bar_time.timestamp()
+        if not self.fixed_offset:
+            self._learn_server_offset()
+        if self.server_offset is None:
+            log.info("Broker clock offset unknown (market closed?) - not trading. Use --server-utc-offset to set it.")
+            return "stale/unknown broker clock - skipped"
+        age = (self.clock() + self.server_offset) - bar_time.timestamp()
         if age > 3 * bar_s:
             log.info("Latest closed candle %s is stale (market closed?) - not trading it", bar_time)
             return "stale candle - skipped"

@@ -12,7 +12,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -45,6 +45,7 @@ def main():
     p.add_argument("--stopout", type=float, default=0.5, help="backtest: broker stop-out level as fraction of margin (0.5 = 50%%)")
     p.add_argument("--max-risk", type=float, default=None, help="with --lots: skip trades whose stop would risk more than this fraction of equity, e.g. 0.10 (mt5 default 0.10; backtest default off; 0 = no cap)")
     p.add_argument("--list-trades", action="store_true", help="backtest: print every trade (to compare with the bot log)")
+    p.add_argument("--server-utc-offset", type=float, default=None, help="mt5: broker server clock minus UTC in hours (e.g. 2 or 3). Auto-detected when the market is open")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
@@ -79,6 +80,21 @@ def main():
         print(res.to_string(index=False))
         return
 
+    if a.cmd == "servertime":
+        import time as _t
+        import MetaTrader5 as mt5
+        if not mt5.initialize():
+            raise SystemExit(f"MT5 initialize failed: {mt5.last_error()}")
+        mt5.symbol_select(a.symbol, True)
+        off = mt5.symbol_info_tick(a.symbol).time - _t.time()
+        snapped = round(off / 1800) * 1800
+        mt5.shutdown()
+        if abs(off - snapped) < 30 and abs(snapped) <= 14 * 3600:
+            print(f"Broker server clock = UTC{snapped / 3600:+g} (use --server-utc-offset {snapped / 3600:g} if you want to fix it)")
+        else:
+            print("Cannot tell: the last tick is old, so the market looks closed. Run this again while gold is trading.")
+        return
+
     if a.cmd == "news":
         from .news import NewsFilter
         nf = NewsFilter(a.news_before, a.news_after)
@@ -109,7 +125,7 @@ def main():
         news = NewsFilter(a.news_before, a.news_after) if a.news else None
         Mt5Bot(mt5, a.symbol, a.timeframe, make_com(), news=news, risk_pct=a.risk,
                sl_atr=a.sl_atr, tp_atr=a.tp_atr, magic=a.magic,
-               htf_min=a.htf_min, htf_tf=a.htf_tf, fixed_lots=a.lots, max_risk_pct=0.10 if a.max_risk is None else a.max_risk, dry_run=not a.live_orders).run()
+               htf_min=a.htf_min, htf_tf=a.htf_tf, server_utc_offset_hours=a.server_utc_offset, fixed_lots=a.lots, max_risk_pct=0.10 if a.max_risk is None else a.max_risk, dry_run=not a.live_orders).run()
         return
 
     df = synthetic_xauusd() if a.cmd == "demo" else load_csv(a.csv)

@@ -51,7 +51,7 @@ class FakeMT5:
 
 def bot(mt5, dry=True, buys=10):
     ags = [Always(1, i) for i in range(buys)] + [Always(0, 50 + i) for i in range(10 - buys)]
-    return Mt5Bot(mt5, committee=Committee(ags, 0.8), dry_run=dry)
+    return Mt5Bot(mt5, committee=Committee(ags, 0.8), dry_run=dry, clock=lambda: mt5.now)
 
 
 class T(unittest.TestCase):
@@ -81,9 +81,30 @@ class T(unittest.TestCase):
         self.assertIn("already open", b.step()); self.assertEqual(m.sent, [])
 
     def test_stale_candle_skipped(self):
-        m = FakeMT5(); m.now += 3 * 86400  # weekend gap: last closed candle is days old
+        m = FakeMT5()
+        b = bot(m, dry=False); b.fixed_offset, b.server_offset = True, 0; b.connect()
+        b.clock = lambda: m.now + 3 * 3600      # known offset 0; PC clock says the last closed candle is >3 bars old
+        self.assertIn("stale candle", b.step()); self.assertEqual(m.sent, [])
+
+    def test_weekend_frozen_tick_does_not_fool_the_guard(self):
+        """Market closed: tick.time is frozen (Friday) while the PC clock is days later -> must NOT trade."""
+        m = FakeMT5()
         b = bot(m, dry=False); b.connect()
-        self.assertIn("stale", b.step()); self.assertEqual(m.sent, [])
+        b.clock = lambda: m.now + 2 * 86400 + 47 * 60 + 13   # Sunday evening on the PC, tick still Friday
+        out = b.step()
+        self.assertIn("unknown broker clock", out); self.assertEqual(m.sent, [])
+
+    def test_offset_learned_from_fresh_tick(self):
+        m = FakeMT5()
+        b = bot(m, dry=False); b.connect()
+        b.clock = lambda: m.now - 3 * 3600 + 2     # server is UTC+3, tick 2s old
+        self.assertTrue(b.step().startswith("PLACED")); self.assertEqual(b.server_offset, 3 * 3600)
+
+    def test_fixed_offset_overrides(self):
+        m = FakeMT5()
+        b = bot(m, dry=False); b.fixed_offset, b.server_offset = True, 3 * 3600; b.connect()
+        b.clock = lambda: m.now - 3 * 3600 + 120
+        self.assertTrue(b.step().startswith("PLACED"))
 
     def test_no_consensus_no_trade(self):
         m = FakeMT5(); b = bot(m, dry=False, buys=7); b.connect()

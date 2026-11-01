@@ -99,3 +99,6 @@ python -m xauusd_agents mt5 --symbol XAUUSD --timeframe H1 --threshold 0.9 --sl-
 python -m xauusd_agents optimize --csv XAUUSD_H1_long.csv --from 2022-01-01 --split 2024-07-01 --htf-min 6 --spread 0.30
 ```
 Chooses threshold/stop/target on the earlier period and checks them on the later one, with the H4 filter on.
+
+## Broker clock / stale-candle guard
+The bot compares the last closed candle with your PC clock, converted to broker time. The offset is learned from a fresh tick while the market is open (or fixed with `--server-utc-offset 3`). If the market is closed and no offset is known, it does not trade. Check yours with `python -m xauusd_agents servertime` while gold is trading.
