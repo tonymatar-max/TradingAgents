@@ -23,6 +23,7 @@ def main():
     p.add_argument("--to", dest="end", help="end date YYYY-MM-DD (backtest/export)")
     p.add_argument("--out", default="xauusd.csv", help="export: output csv")
     p.add_argument("--spread", type=float, default=0.30, help="backtest: spread in USD per oz")
+    p.add_argument("--report", action="store_true", help="backtest: monthly, long/short and buy&hold breakdown")
     a = p.parse_args()
 
     if a.cmd == "export":
@@ -62,6 +63,17 @@ def main():
     print(f"Committee needs {com.required}/{len(com.agents)} agents to agree")
     for k, v in stats.items():
         print(f"  {k}: {v}")
+    if a.report and len(trades):
+        t = trades.copy()
+        t["month"] = df.index[t.exit_i].to_period("M")
+        m = t.groupby("month").pnl.agg(trades="count", net="sum", wins=lambda x: (x > 0).sum())
+        print("\nMonthly (by exit date):\n" + m.round(2).to_string())
+        print("\nBy direction:")
+        print(t.assign(side=t["dir"].map({1: "LONG", -1: "SHORT"})).groupby("side").pnl
+              .agg(trades="count", net="sum", avg="mean").round(2).to_string())
+        d = df[df.index >= pd.Timestamp(a.start)] if a.start else df
+        print(f"\nBuy&hold gold same period: {100 * (d.close.iloc[-1] / d.open.iloc[0] - 1):.1f}%  "
+              f"({d.open.iloc[0]:.2f} -> {d.close.iloc[-1]:.2f})")
 
 
 if __name__ == "__main__":
