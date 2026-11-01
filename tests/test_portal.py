@@ -196,3 +196,22 @@ class BotAppliesEdits(unittest.TestCase):
         d, m, b = self.mk()
         ls.write(d, {"lots": 1.0, "max_risk": 0.0001}, "test")
         self.assertIn("exceeds", b.step()); self.assertEqual(m.sent, [])
+
+
+class Votes(unittest.TestCase):
+    def test_validate_votes(self):
+        from xauusd_agents import live_settings as ls
+        self.assertEqual(ls.validate({"votes": 9})[0], {"votes": 9})
+        for bad in (6, 11, 8.5, True, "8", None, float("nan")):
+            self.assertTrue(ls.validate({"votes": bad})[1], bad)
+
+    def test_bot_changes_required_votes_and_resets(self):
+        from xauusd_agents import live_settings as ls
+        d = tempfile.mkdtemp()
+        m = FakeMT5(); b = bot(m, dry=False, buys=8); b.events = EventLog(d); b._logdir = d; b.connect()
+        self.assertEqual(b.committee.required, 8)
+        ls.write(d, {"votes": 9}, "test")
+        self.assertEqual(b.step(), "HOLD"); self.assertEqual(b.committee.required, 9)   # 8 buys no longer enough
+        self.assertEqual(m.sent, [])
+        ls.reset(d, "test"); b.last_bar = None
+        self.assertTrue(b.step().startswith("PLACED BUY")); self.assertEqual(b.committee.required, 8)

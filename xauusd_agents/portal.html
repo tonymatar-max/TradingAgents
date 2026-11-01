@@ -66,6 +66,7 @@
   .row label { min-width: 150px; color: var(--muted); }
   input[type=number], input[type=password] { font: inherit; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; width: 120px; }
   input[type=password] { width: 190px; }
+  select { font: inherit; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
   input:disabled { opacity: .45; }
   button.primary { background: var(--accent); color: #fff; border-color: transparent; font-weight: 600; }
   button.danger { color: var(--sell); }
@@ -125,6 +126,12 @@
         <span class="hint">0.01 – 1.00 lots</span>
       </div>
       <div class="row">
+        <label for="votes">Agents that must agree</label>
+        <select id="votes" aria-label="Number of agents that must agree"><option>7</option><option>8</option><option>9</option><option>10</option></select>
+        <span>of <span id="nagents">10</span></span>
+        <span class="hint">8 is the tested default; 9–10 trade less often but only on near-unanimous signals</span>
+      </div>
+      <div class="row">
         <label for="risk">Risk per trade (auto)</label>
         <input type="number" id="risk" min="0.1" max="3" step="0.1"> <span>% of equity</span>
         <span class="hint">0.1 – 3 %</span>
@@ -147,7 +154,7 @@
       </div>
       <div id="msg" class="msg" role="status" aria-live="polite"></div>
       <div id="applied" class="hint" aria-live="polite"></div>
-      <div class="hint">Not editable here, on purpose: switching to live orders, the symbol, and the strategy settings (threshold, stop, target, H4 filter). They were tested together, so change them on the command line. The bot applies saves within ~15 seconds and logs every change.</div>
+      <div class="hint">Not editable here, on purpose: switching to live orders, the symbol, the stop and target sizes and the H4 filter. They were tested together, so change them on the command line. The bot applies saves within ~15 seconds and logs every change.</div>
       <div class="scroll" id="audit"></div>
     </div>
   </section>
@@ -284,14 +291,14 @@ function curveSvg(c) {
 let dirty = false, last = null;
 const qs = token ? "?token=" + encodeURIComponent(token) : "";
 try { $("pwd").value = sessionStorage.getItem("editpwd") || ""; } catch (e) {}
-["mode-auto", "mode-fixed", "lots", "risk", "maxrisk", "paused"].forEach(id => $(id).addEventListener("input", () => { dirty = true; updatePreview(); }));
+["mode-auto", "mode-fixed", "lots", "risk", "maxrisk", "paused", "votes"].forEach(id => $(id).addEventListener("input", () => { dirty = true; updatePreview(); }));
 
 function fillForm(s) {
   const run = (s.status && s.status.settings) || {};
   const f = (s.editing || {}).file;
   // show what is SAVED (so the form does not snap back before the bot has applied it); fall back to what is running
-  const set = f ? { ...run, lots: f.lots !== undefined ? f.lots : run.lots, risk: f.risk ?? run.risk, max_risk: f.max_risk ?? run.max_risk, paused: f.paused ?? run.paused } : run;
-  const same = !f || (["lots", "risk", "max_risk", "paused"].every(k => f[k] === undefined || f[k] === run[k]));
+  const set = f ? { ...run, lots: f.lots !== undefined ? f.lots : run.lots, risk: f.risk ?? run.risk, max_risk: f.max_risk ?? run.max_risk, paused: f.paused ?? run.paused, votes: f.votes ?? run.votes } : run;
+  const same = !f || (["lots", "risk", "max_risk", "paused", "votes"].every(k => f[k] === undefined || f[k] === run[k]));
   $("applied").textContent = !f ? "Running with the startup settings." :
     same ? "Saved settings are in effect (the bot is running with them)." :
     "Saved, but the bot has not applied them yet. It checks every ~15 seconds. If this stays, the bot is not running.";
@@ -302,6 +309,8 @@ function fillForm(s) {
   $("risk").value = set.risk != null ? +(set.risk * 100).toFixed(2) : 1;
   $("maxrisk").value = set.max_risk != null ? Math.round(set.max_risk * 100) : 10;
   $("paused").checked = !!set.paused;
+  if (set.votes) $("votes").value = String(set.votes);
+  $("nagents").textContent = (s.status && s.status.settings && s.status.settings.agents) || 10;
   updatePreview();
 }
 function updatePreview() {
@@ -336,7 +345,7 @@ async function post(path, body) {
 }
 $("save").onclick = async () => {
   const fixed = $("mode-fixed").checked;
-  const body = { lots: fixed ? +$("lots").value : null, risk: (+$("risk").value) / 100, max_risk: (+$("maxrisk").value) / 100, paused: $("paused").checked };
+  const body = { lots: fixed ? +$("lots").value : null, risk: (+$("risk").value) / 100, max_risk: (+$("maxrisk").value) / 100, paused: $("paused").checked, votes: +$("votes").value };
   const pv = $("preview");
   if (pv.classList.contains("warn") && !confirm("The preview shows a warning:\n\n" + pv.textContent + "\n\nSave anyway?")) return;
   try { const j = await post("", body); dirty = false; say("Saved. " + j.note, true); tick(); }

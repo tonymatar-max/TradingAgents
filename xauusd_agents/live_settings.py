@@ -1,7 +1,7 @@
 """Settings the portal may change while the bot runs. ONE place defines what is allowed and the hard limits.
 
-Deliberately NOT editable from the web: dry-run/live switch, symbol, strategy parameters (threshold, stop/target,
-H4 filter). Those were validated together by backtests; change them on the command line.
+Deliberately NOT editable from the web: dry-run/live switch, symbol, stop/target and the H4 filter.
+`votes` = how many of the agents must agree (7-10; 8 is the default, 9 and 10 are stricter). Those were validated together by backtests; change them on the command line.
 """
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ import os
 
 FILE = "settings.json"
 AUDIT = "settings_audit.jsonl"
-ALLOWED = ("lots", "risk", "max_risk", "paused")
-LIMITS = {"lots": (0.01, 1.0), "risk": (0.001, 0.03), "max_risk": (0.0, 0.25)}
+ALLOWED = ("lots", "risk", "max_risk", "paused", "votes")
+LIMITS = {"lots": (0.01, 1.0), "risk": (0.001, 0.03), "max_risk": (0.0, 0.25), "votes": (7, 10)}
 
 
 def _num(v, name):
@@ -40,6 +40,12 @@ def validate(raw: dict) -> tuple[dict, list[str]]:
                 clean[k] = v
             elif k == "lots" and v is None:
                 clean[k] = None
+            elif k == "votes":
+                x = _num(v, k)
+                lo, hi = LIMITS[k]
+                if x != int(x) or not lo <= x <= hi:
+                    raise ValueError(f"votes must be a whole number between {lo} and {hi}")
+                clean[k] = int(x)
             else:
                 x = _num(v, k)
                 lo, hi = LIMITS[k]

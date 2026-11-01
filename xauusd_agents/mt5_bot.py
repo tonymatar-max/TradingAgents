@@ -52,7 +52,8 @@ class Mt5Bot:
             self._logdir = logdir
         self._fresh = None
         self.paused = False
-        self._startup = {"fixed_lots": fixed_lots, "risk_pct": risk_pct, "max_risk_pct": max_risk_pct, "paused": False}
+        self._startup = {"fixed_lots": fixed_lots, "risk_pct": risk_pct, "max_risk_pct": max_risk_pct, "paused": False,
+                         "votes": self.committee.required}
         self._ov_mtime = "unset"
         self.clock = clock                      # local UTC epoch seconds (injectable for tests)
         self.fixed_offset = server_utc_offset_hours is not None
@@ -127,17 +128,21 @@ class Mt5Bot:
             clean, errs = ls.validate({k: v for k, v in (ls.read(self._logdir) or {}).items() if k in ls.ALLOWED})
             for e in errs:
                 log.warning("settings.json ignored a bad value: %s", e)
-            for k, attr in (("lots", "fixed_lots"), ("risk", "risk_pct"), ("max_risk", "max_risk_pct"), ("paused", "paused")):
+            for k, attr in (("lots", "fixed_lots"), ("risk", "risk_pct"), ("max_risk", "max_risk_pct"),
+                            ("paused", "paused"), ("votes", "votes")):
                 if k in clean:
                     vals[attr] = clean[k]
-        before = (self.fixed_lots, self.risk_pct, self.max_risk_pct, self.paused)
+        before = (self.fixed_lots, self.risk_pct, self.max_risk_pct, self.paused, self.committee.required)
         self.fixed_lots, self.risk_pct, self.max_risk_pct, self.paused = (
             vals["fixed_lots"], vals["risk_pct"], vals["max_risk_pct"], vals["paused"])
-        after = (self.fixed_lots, self.risk_pct, self.max_risk_pct, self.paused)
+        n = len(self.committee.agents)
+        self.committee.required = max(1, min(int(vals["votes"]), n))     # how many agents must agree
+        self.committee.threshold = self.committee.required / n
+        after = (self.fixed_lots, self.risk_pct, self.max_risk_pct, self.paused, self.committee.required)
         if before != after:
-            log.info("SETTINGS CHANGED from portal: lots=%s risk=%s max_risk=%s paused=%s", *after)
+            log.info("SETTINGS CHANGED from portal: lots=%s risk=%s max_risk=%s paused=%s votes=%s", *after)
             self.events.append(type="settings_changed", lots=self.fixed_lots, risk=self.risk_pct,
-                               max_risk=self.max_risk_pct, paused=self.paused)
+                               max_risk=self.max_risk_pct, paused=self.paused, votes=self.committee.required)
 
     def _status(self, last_status):
         if not self.events:
@@ -149,7 +154,8 @@ class Mt5Bot:
                 mode="DRY RUN" if self.dry_run else "LIVE ORDERS (demo)", symbol=self.symbol,
                 last_bar=str(self.last_bar), last_status=last_status,
                 settings={**self.describe, "lots": self.fixed_lots, "risk": self.risk_pct,
-                          "max_risk": self.max_risk_pct, "paused": self.paused},
+                          "max_risk": self.max_risk_pct, "paused": self.paused,
+                          "votes": self.committee.required, "agents": len(self.committee.agents)},
                 usd_per_dollar_per_lot=info.trade_tick_value / info.trade_tick_size,
                 server_offset_h=None if self.server_offset is None else self.server_offset / 3600,
                 balance=getattr(acc, "balance", None), equity=getattr(acc, "equity", None),
