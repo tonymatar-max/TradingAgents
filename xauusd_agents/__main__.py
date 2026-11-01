@@ -12,7 +12,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -35,11 +35,31 @@ def main():
     p.add_argument("--news-after", type=int, default=30, help="minutes after an event")
     p.add_argument("--magic", type=int, default=26001, help="mt5: order tag; use a different one per bot when running several")
     p.add_argument("--tfs", default="M15,M30,H1,H4", help="tfscan: comma list of timeframes")
+    p.add_argument("--htf-min", type=int, default=0, help="require >= N of 10 agents on the higher timeframe to agree (0 = off)")
+    p.add_argument("--htf-tf", default="H4", choices=["H4", "D1"], help="higher timeframe")
+    p.add_argument("--htf-csv", help="optional CSV of the higher timeframe (else it is built from the main CSV)")
+    p.add_argument("--htf-mins", default="0,5,6,7,8,9", help="confluence: values of --htf-min to compare")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
     agents = extended_agents(a.ib_bars, a.ib_start_hour) if a.agents == 12 else default_agents()
     make_com = lambda: Committee(agents, threshold=a.threshold)
+
+    def load_htf(df_):
+        from .htf import RULES, resample_ohlc
+        return load_csv(a.htf_csv) if a.htf_csv else resample_ohlc(df_, RULES[a.htf_tf])
+
+    if a.cmd == "confluence":
+        from .htf import confluence_table
+        if not (a.csv and a.start and a.split):
+            raise SystemExit("confluence needs --csv (H1 file), --from and --split")
+        ltf = load_csv(a.csv)
+        res = confluence_table(ltf, load_htf(ltf), a.start, a.split, [int(x) for x in a.htf_mins.split(",")],
+                               a.threshold, a.sl_atr, a.tp_atr, a.spread, a.risk, agents)
+        print(f"{a.htf_tf} confluence on the main timeframe: thr={a.threshold} sl={a.sl_atr} tp={a.tp_atr} spread={a.spread}")
+        print(f"train = {a.start} -> {a.split}, test = {a.split} -> end. htf_min = agents needed on {a.htf_tf}\n")
+        print(res.to_string(index=False))
+        return
 
     if a.cmd == "tfscan":
         from .tfscan import scan_mt5
@@ -81,7 +101,8 @@ def main():
         from .news import NewsFilter
         news = NewsFilter(a.news_before, a.news_after) if a.news else None
         Mt5Bot(mt5, a.symbol, a.timeframe, make_com(), news=news, risk_pct=a.risk,
-               sl_atr=a.sl_atr, tp_atr=a.tp_atr, magic=a.magic, dry_run=not a.live_orders).run()
+               sl_atr=a.sl_atr, tp_atr=a.tp_atr, magic=a.magic,
+               htf_min=a.htf_min, htf_tf=a.htf_tf, dry_run=not a.live_orders).run()
         return
 
     df = synthetic_xauusd() if a.cmd == "demo" else load_csv(a.csv)
@@ -110,7 +131,11 @@ def main():
         for k, v in d.votes.items():
             print(f"  {k:24s} {'BUY' if v == 1 else 'SELL' if v == -1 else '-'}")
         return
-    trades, _, stats = run_backtest(df, com, Config(risk_pct=a.risk, spread=a.spread, sl_atr=a.sl_atr, tp_atr=a.tp_atr), start=a.start)
+    sigs = None
+    if a.htf_min:
+        from .htf import filter_signals, htf_direction
+        sigs = filter_signals(com.signals(df), htf_direction(df, load_htf(df), a.htf_min))
+    trades, _, stats = run_backtest(df, com, Config(risk_pct=a.risk, spread=a.spread, sl_atr=a.sl_atr, tp_atr=a.tp_atr), start=a.start, signals=sigs)
     if a.start:
         print(f"Trading from {a.start} to {df.index[-1]} ({len(df)} candles loaded incl. warm-up)")
     print(f"Committee needs {com.required}/{len(com.agents)} agents to agree")

@@ -32,11 +32,11 @@ def position_size(equity: float, stop_dist: float, cfg: Config) -> float:
 
 
 def run_backtest(df: pd.DataFrame, committee: Committee | None = None, cfg: Config | None = None,
-                 start=None, table=None):
+                 start=None, table=None, signals=None):
     """`start`: only open trades from this date on; earlier bars are used purely to warm up indicators."""
     cfg = cfg or Config()
     committee = committee or Committee()
-    sig = committee.signals(df, table)
+    sig = signals if signals is not None else committee.signals(df, table)
     if start is not None:
         sig = sig.where(df.index >= pd.Timestamp(start), 0)
     a = ind.atr(df).to_numpy()

@@ -71,3 +71,13 @@ python -m xauusd_agents mt5 --symbol XAUUSD --threshold 0.9 --sl-atr 1.5 --tp-at
 python -m xauusd_agents tfscan --symbol XAUUSD --tfs M15,M30,H1,H4 --from 2026-01-01 --split 2026-07-01 --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --spread 0.30
 ```
 Exports each timeframe from MT5 and runs the same settings on all of them (train / test split).
+
+## H1 + H4 confluence filter
+An H1 signal only counts if at least N of the 10 agents, run on H4 candles, point the same way (ties never confirm). H4 candles are only used after they close (no look-ahead; unit-tested).
+```
+# compare off vs N=5..9 with a train/test split (H4 is built from the H1 csv unless --htf-csv is given)
+python -m xauusd_agents confluence --csv XAUUSD_H1.csv --from 2026-01-01 --split 2026-07-01 --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --spread 0.30
+# single backtest / live dry-run with the filter on
+python -m xauusd_agents backtest --csv XAUUSD_H1.csv --from 2026-01-01 --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --htf-min 6 --report
+python -m xauusd_agents mt5 --symbol XAUUSD --timeframe H1 --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --htf-min 6 --news
+```

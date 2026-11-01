@@ -33,13 +33,14 @@ def lot_size(equity, risk_pct, stop_dist, info) -> float:
 class Mt5Bot:
     def __init__(self, mt5, symbol="XAUUSD", timeframe="H1", committee=None, risk_pct=0.01,
                  sl_atr=1.5, tp_atr=3.0, max_daily_loss_pct=0.03, magic=26001, dry_run=True,
-                 bars=500, deviation=30, news=None):
+                 bars=500, deviation=30, news=None, htf_min=0, htf_tf="H4", htf_agents=None):
         self.mt5, self.symbol, self.dry_run = mt5, symbol, dry_run
         self.tf = getattr(mt5, f"TIMEFRAME_{timeframe}")
         self.committee = committee or Committee()
         self.risk_pct, self.sl_atr, self.tp_atr = risk_pct, sl_atr, tp_atr
         self.max_daily_loss_pct, self.magic, self.bars, self.deviation = max_daily_loss_pct, magic, bars, deviation
         self.last_bar, self.news = None, news
+        self.htf_min, self.htf_tf, self.htf_agents = htf_min, htf_tf, htf_agents
 
     # ---- setup -------------------------------------------------------------
     def connect(self):
@@ -98,6 +99,19 @@ class Mt5Bot:
             return "HOLD"
         if self.has_position():
             return f"{d.action} signal ignored: position already open"
+        if self.htf_min:
+            from .htf import last_closed_direction
+            rates = self.mt5.copy_rates_from_pos(self.symbol, getattr(self.mt5, f"TIMEFRAME_{self.htf_tf}"), 0, self.bars)
+            if rates is None or len(rates) < 250:
+                return f"{d.action} signal ignored: {self.htf_tf} candles unavailable"
+            h = pd.DataFrame(rates)
+            h.index = pd.to_datetime(h["time"], unit="s")
+            h = h[["open", "high", "low", "close"]].iloc[:-1]  # drop forming candle
+            want = 1 if d.action == "BUY" else -1
+            got = last_closed_direction(h, self.htf_min, self.htf_agents)
+            if got != want:
+                return f"{d.action} signal ignored: {self.htf_tf} does not confirm ({got:+d})"
+            log.info("%s confirms %s", self.htf_tf, d.action)
         if self.news is not None:
             blocked, why = self.news.blocked()
             if blocked:
