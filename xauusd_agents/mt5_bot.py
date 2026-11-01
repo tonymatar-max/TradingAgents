@@ -84,6 +84,13 @@ class Mt5Bot:
         if bar_time == self.last_bar:
             return "waiting for new candle"
         self.last_bar = bar_time
+        bar_s = (df.index[-1] - df.index[-2]).total_seconds()
+        # compare in broker/server time: tick.time is the server clock, same clock as candle times
+        now_s = self.mt5.symbol_info_tick(self.symbol).time
+        age = now_s - bar_time.timestamp()
+        if age > 3 * bar_s:
+            log.info("Latest closed candle %s is stale (market closed?) - not trading it", bar_time)
+            return "stale candle - skipped"
         d = self.committee.decide(df)
         log.info("%s bar %s: %s (BUY %d / SELL %d / NEUTRAL %d, need %d)",
                  self.symbol, bar_time, d.action, d.buy, d.sell, d.neutral, d.required)

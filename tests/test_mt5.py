@@ -30,6 +30,7 @@ class FakeMT5:
         self.mode, self.pos, self.sent = mode, list(positions), []
         df = synthetic_xauusd(400)
         self.rates = [(t.timestamp(), *r) for t, r in zip(df.index, df[["open", "high", "low", "close"]].values)]
+        self.now = self.rates[-1][0] + 600  # server clock: 10 min into the forming candle
 
     def initialize(self): return True
     def shutdown(self): pass
@@ -37,7 +38,7 @@ class FakeMT5:
     def account_info(self): return NS(trade_mode=self.mode, login=1, balance=10000, equity=10000)
     def symbol_select(self, s, e): return True
     def symbol_info(self, s): return INFO
-    def symbol_info_tick(self, s): return NS(ask=2000.2, bid=2000.0)
+    def symbol_info_tick(self, s): return NS(ask=2000.2, bid=2000.0, time=self.now)
     def positions_get(self, symbol=None): return self.pos
     def history_deals_get(self, a, b): return []
     def copy_rates_from_pos(self, s, tf, pos, n):
@@ -78,6 +79,11 @@ class T(unittest.TestCase):
     def test_no_second_position(self):
         m = FakeMT5(positions=[NS(magic=26001)]); b = bot(m, dry=False); b.connect()
         self.assertIn("already open", b.step()); self.assertEqual(m.sent, [])
+
+    def test_stale_candle_skipped(self):
+        m = FakeMT5(); m.now += 3 * 86400  # weekend gap: last closed candle is days old
+        b = bot(m, dry=False); b.connect()
+        self.assertIn("stale", b.step()); self.assertEqual(m.sent, [])
 
     def test_no_consensus_no_trade(self):
         m = FakeMT5(); b = bot(m, dry=False, buys=7); b.connect()

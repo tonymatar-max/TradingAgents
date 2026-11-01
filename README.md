@@ -47,3 +47,9 @@ python -m xauusd_agents export   --symbol XAUUSD --timeframe H1 --from 2026-01-0
 python -m xauusd_agents backtest --csv xauusd_h1.csv --from 2026-01-01 --spread 0.30
 ```
 Earlier candles are loaded only to warm up the indicators; trades start at `--from`. Add `--to YYYY-MM-DD` to cap the end.
+
+## Out-of-sample parameter sweep
+```
+python -m xauusd_agents optimize --csv xauusd_h1.csv --from 2026-01-01 --split 2026-07-01 --spread 0.30
+```
+Tests consensus threshold, stop and target sizes on the train period (from -> split) and on the unseen test period (split -> end). Adopt only settings that are good in both and have similar neighbours.

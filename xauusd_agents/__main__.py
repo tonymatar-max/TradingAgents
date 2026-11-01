@@ -12,7 +12,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -24,6 +24,7 @@ def main():
     p.add_argument("--out", default="xauusd.csv", help="export: output csv")
     p.add_argument("--spread", type=float, default=0.30, help="backtest: spread in USD per oz")
     p.add_argument("--report", action="store_true", help="backtest: monthly, long/short and buy&hold breakdown")
+    p.add_argument("--split", help="optimize: first date of the TEST period, e.g. 2026-07-01")
     a = p.parse_args()
 
     if a.cmd == "export":
@@ -50,6 +51,19 @@ def main():
     if a.cmd == "demo":
         print("NOTE: demo uses SYNTHETIC data, not real gold prices.\n")
     com = Committee(threshold=a.threshold)
+
+    if a.cmd == "optimize":
+        from .optimize import sweep
+        if not (a.start and a.split):
+            raise SystemExit("optimize needs --from (train start) and --split (test start)")
+        res = sweep(df, a.start, a.split, spread=a.spread, risk=a.risk)
+        if res.empty:
+            raise SystemExit("No setting produced >= 20 trades in both periods.")
+        print(f"Train: {a.start} -> {a.split} | Test: {a.split} -> {df.index[-1]} | sorted by WORST of the two profit factors")
+        print("(default settings are thr=0.8 sl=1.5 tp=3.0)\n")
+        print(res.head(12).to_string(index=False))
+        print("\nOnly trust a setting that is good in BOTH periods AND close to its neighbours in the table.")
+        return
 
     if a.cmd == "signal":
         d = com.decide(df)
