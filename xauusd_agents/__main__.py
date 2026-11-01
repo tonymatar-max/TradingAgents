@@ -12,7 +12,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal", "agentstats"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -54,6 +54,7 @@ def main():
     p.add_argument("--thresholds", default="0.7,0.8,0.9", help="optimize: thresholds to try, e.g. 0.8,0.9,1.0 (1.0 = all 10 agents)")
     p.add_argument("--sls", default="1.0,1.5,2.0", help="optimize: stop sizes in ATR to try")
     p.add_argument("--tps", default="2.0,3.0,4.0", help="optimize: target sizes in ATR to try")
+    p.add_argument("--live", action="store_true", help="agentstats: analyse the live/dry-run paper trades in --logdir instead of a backtest")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
@@ -100,6 +101,44 @@ def main():
             print(f"Broker server clock = UTC{snapped / 3600:+g} (use --server-utc-offset {snapped / 3600:g} if you want to fix it)")
         else:
             print("Cannot tell: the last tick is old, so the market looks closed. Run this again while gold is trading.")
+        return
+
+    if a.cmd == "agentstats":
+        from .agent_stats import backtest_report, live_report
+        pd.set_option("display.width", 200)
+        if a.live:
+            res = live_report(a.logdir)
+            if res.empty:
+                raise SystemExit("No closed paper trades with recorded votes yet.")
+            print(f"Live/dry-run attribution on {res.attrs['trades']} closed paper trades (needs 30+ to mean anything)\n")
+            print(res.to_string(index=False))
+            return
+        if not (a.csv and a.start and a.split):
+            raise SystemExit("agentstats needs --csv, --from and --split (or --live)")
+        df = load_csv(a.csv)
+        if a.end:
+            df = df[: pd.Timestamp(a.end) + pd.Timedelta(days=1)]
+        dirn = None
+        if a.htf_min:
+            from .htf import htf_direction
+            dirn = htf_direction(df, load_htf(df), a.htf_min)
+        req = make_com().required
+        res = backtest_report(df, agents, req, a.start, a.split,
+                              Config(risk_pct=a.risk, spread=a.spread, sl_atr=a.sl_atr, tp_atr=a.tp_atr, balance=a.balance,
+                                     fixed_lots=a.lots), dirn)
+        cp = res.attrs["committee_pf"]
+        print(f"Committee ({req}/{len(agents)} agree{', H4 filter ' + str(a.htf_min) if a.htf_min else ''}): "
+              f"{res.attrs['committee_trades']} trades, PF all={cp['all']} train={cp['train']} test={cp['test']}")
+        print(f"train = {a.start} -> {a.split}, test = {a.split} -> end\n")
+        print(res.to_string(index=False))
+        bv = res.attrs.get("by_votes")
+        if bv is not None and len(bv):
+            print("\nCommittee trades by how many agents agreed (is a stronger consensus actually better?):")
+            print(bv.to_string(index=False))
+        print("\nsolo_*: the agent trading alone. agree/other: committee trades where it voted WITH the trade vs not.\n"
+              "pf_without: profit factor of the committee trades that do NOT depend on this agent's vote. dPF = that minus the\n"
+              "full committee's (positive = trades needing this agent were worse than the rest). A verdict needs the same sign\n"
+              "in BOTH halves; 'unclear' is the normal answer. Trust nothing with fewer than ~30 trades in a bucket.")
         return
 
     if a.cmd == "portal":

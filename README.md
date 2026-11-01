@@ -131,3 +131,10 @@ python -m xauusd_agents backtest --csv XAUUSD_H1_long.csv --from 2022-01-01 --th
 
 ## Fixed 0.5 lots
 `scripts\run_bot.ps1` starts the background bot with `--lots 0.5 --max-risk 0` (override with `-Lots` / `-MaxRisk`). Manual equivalent: add `"--lots","0.5","--max-risk","0"` to the `mt5` command. The portal's "Reset to startup settings" returns to 0.5.
+
+## Which agent is failing?
+```
+python -m xauusd_agents agentstats --csv XAUUSD_H1_long.csv --from 2022-01-01 --split 2024-07-01 --threshold 0.8 --sl-atr 2.0 --tp-atr 2.0 --htf-min 6
+python -m xauusd_agents agentstats --live        # same idea on the dry-run paper trades in logs\ (needs 30+ trades)
+```
+Three views per agent: trading alone, committee trades with vs without its agreement, and the committee without it. Also prints committee quality by number of agreeing agents (8, 9, 10).
