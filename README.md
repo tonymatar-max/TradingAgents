@@ -128,3 +128,6 @@ The page has a "Change settings while the bot is running" panel: lot size (auto 
 python -m xauusd_agents optimize --csv XAUUSD_H1_long.csv --from 2022-01-01 --split 2024-07-01 --htf-min 6 --thresholds 0.7,0.8,0.9,1.0 --sls 2.0 --tps 2.0
 python -m xauusd_agents backtest --csv XAUUSD_H1_long.csv --from 2022-01-01 --threshold 1.0 --sl-atr 2.0 --tp-atr 2.0 --htf-min 6 --report
 ```
+
+## Fixed 0.5 lots
+`scripts\run_bot.ps1` starts the background bot with `--lots 0.5 --max-risk 0` (override with `-Lots` / `-MaxRisk`). Manual equivalent: add `"--lots","0.5","--max-risk","0"` to the `mt5` command. The portal's "Reset to startup settings" returns to 0.5.
