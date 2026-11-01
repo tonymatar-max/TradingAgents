@@ -25,6 +25,8 @@ def main():
     p.add_argument("--spread", type=float, default=0.30, help="backtest: spread in USD per oz")
     p.add_argument("--report", action="store_true", help="backtest: monthly, long/short and buy&hold breakdown")
     p.add_argument("--split", help="optimize: first date of the TEST period, e.g. 2026-07-01")
+    p.add_argument("--sl-atr", type=float, default=1.5, help="stop distance in ATR multiples")
+    p.add_argument("--tp-atr", type=float, default=3.0, help="target distance in ATR multiples")
     a = p.parse_args()
 
     if a.cmd == "export":
@@ -42,7 +44,7 @@ def main():
         from .mt5_bot import Mt5Bot
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
         Mt5Bot(mt5, a.symbol, a.timeframe, Committee(threshold=a.threshold), risk_pct=a.risk,
-               dry_run=not a.live_orders).run()
+               sl_atr=a.sl_atr, tp_atr=a.tp_atr, dry_run=not a.live_orders).run()
         return
 
     df = synthetic_xauusd() if a.cmd == "demo" else load_csv(a.csv)
@@ -71,7 +73,7 @@ def main():
         for k, v in d.votes.items():
             print(f"  {k:24s} {'BUY' if v == 1 else 'SELL' if v == -1 else '-'}")
         return
-    trades, _, stats = run_backtest(df, com, Config(risk_pct=a.risk, spread=a.spread), start=a.start)
+    trades, _, stats = run_backtest(df, com, Config(risk_pct=a.risk, spread=a.spread, sl_atr=a.sl_atr, tp_atr=a.tp_atr), start=a.start)
     if a.start:
         print(f"Trading from {a.start} to {df.index[-1]} ({len(df)} candles loaded incl. warm-up)")
     print(f"Committee needs {com.required}/{len(com.agents)} agents to agree")
