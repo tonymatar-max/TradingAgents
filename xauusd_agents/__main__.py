@@ -33,6 +33,7 @@ def main():
     p.add_argument("--news", action="store_true", help="mt5: block new trades around high-impact USD news")
     p.add_argument("--news-before", type=int, default=30, help="minutes before an event")
     p.add_argument("--news-after", type=int, default=30, help="minutes after an event")
+    p.add_argument("--magic", type=int, default=26001, help="mt5: order tag; use a different one per bot when running several")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
@@ -68,7 +69,7 @@ def main():
         from .news import NewsFilter
         news = NewsFilter(a.news_before, a.news_after) if a.news else None
         Mt5Bot(mt5, a.symbol, a.timeframe, make_com(), news=news, risk_pct=a.risk,
-               sl_atr=a.sl_atr, tp_atr=a.tp_atr, dry_run=not a.live_orders).run()
+               sl_atr=a.sl_atr, tp_atr=a.tp_atr, magic=a.magic, dry_run=not a.live_orders).run()
         return
 
     df = synthetic_xauusd() if a.cmd == "demo" else load_csv(a.csv)
