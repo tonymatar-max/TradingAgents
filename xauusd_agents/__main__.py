@@ -82,7 +82,7 @@ def main():
         from .optimize import sweep
         if not (a.start and a.split):
             raise SystemExit("optimize needs --from (train start) and --split (test start)")
-        res = sweep(df, a.start, a.split, spread=a.spread, risk=a.risk)
+        res = sweep(df, a.start, a.split, spread=a.spread, risk=a.risk, agents=agents)
         if res.empty:
             raise SystemExit("No setting produced >= 20 trades in both periods.")
         print(f"Train: {a.start} -> {a.split} | Test: {a.split} -> {df.index[-1]} | sorted by WORST of the two profit factors")

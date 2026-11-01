@@ -10,14 +10,14 @@ from .committee import Committee
 
 
 def sweep(df, start, split, thresholds=(0.7, 0.8, 0.9), sls=(1.0, 1.5, 2.0), tps=(2.0, 3.0, 4.0),
-          spread=0.30, risk=0.01):
-    base = Committee()
+          spread=0.30, risk=0.01, agents=None):
+    base = Committee(agents)
     table = base.vote_table(df)  # causal: identical whether computed on full or truncated data
     split = pd.Timestamp(split)
     tr_df = df[df.index < split]
     rows = []
     for th, sl, tp in itertools.product(thresholds, sls, tps):
-        com = Committee(threshold=th)
+        com = Committee(agents, threshold=th)
         cfg = Config(sl_atr=sl, tp_atr=tp, spread=spread, risk_pct=risk)
         r = {}
         for tag, d, st in (("train", tr_df, start), ("test", df, split)):
