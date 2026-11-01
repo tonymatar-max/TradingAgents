@@ -107,3 +107,23 @@ class CliPaths(unittest.TestCase):
         self.assertNotIn("htf", inspect.signature(scan_mt5).parameters)  # tfscan takes no htf argument
         import xauusd_agents.__main__ as m
         self.assertNotIn("htf=load_htf", inspect.getsource(m).split('cmd == "tfscan"')[1].split("return")[0])
+
+
+class Scale(unittest.TestCase):
+    def test_scale_one_is_unchanged_and_scale_two_differs(self):
+        from xauusd_agents.agents import default_agents
+        df = synthetic_xauusd(3000)
+        a1, a2 = default_agents(), default_agents(2.0)
+        self.assertEqual([a.name for a in a1], [a.name for a in a2])
+        same = [bool((x.votes(df) == y.votes(df)).all()) for x, y in zip(default_agents(1.0), a1)]
+        self.assertTrue(all(same))                                   # explicit 1.0 == default
+        self.assertTrue(any(not (x.votes(df) == y.votes(df)).all() for x, y in zip(a1, a2)))
+
+    def test_m30_with_h1_filter_end_to_end(self):
+        import os, subprocess, sys, tempfile
+        d = tempfile.mkdtemp(); csv = os.path.join(d, "m30.csv")
+        synthetic_xauusd(6000, freq="30min").rename_axis("time").to_csv(csv)
+        r = subprocess.run([sys.executable, "-m", "xauusd_agents", "agentstats", "--csv", csv, "--from", "2024-02-01",
+                            "--split", "2024-04-10", "--sl-atr", "2.0", "--tp-atr", "2.0", "--htf-min", "6",
+                            "--htf-tf", "H1", "--agent-scale", "2"], capture_output=True, text=True, timeout=900)
+        self.assertEqual(r.returncode, 0, r.stderr[-600:]); self.assertIn("agents_agreeing", r.stdout)

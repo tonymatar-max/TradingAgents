@@ -21,6 +21,12 @@ class Agent(ABC):
     name: str = "agent"
     style: str = ""
 
+    def __init__(self, scale: float = 1.0):
+        self.s = scale                      # multiplies every period (2.0 on M30 = the same time spans as on H1)
+
+    def p(self, v: int) -> int:
+        return max(1, int(round(v * self.s)))
+
     @abstractmethod
     def votes(self, df: pd.DataFrame) -> pd.Series: ...
 
@@ -30,7 +36,7 @@ class EmaTrend(Agent):
 
     def votes(self, df):
         c = df["close"]
-        e20, e50, e200 = ind.ema(c, 20), ind.ema(c, 50), ind.ema(c, 200)
+        e20, e50, e200 = ind.ema(c, self.p(20)), ind.ema(c, self.p(50)), ind.ema(c, self.p(200))
         return _vote((e20 > e50) & (c > e200), (e20 < e50) & (c < e200))
 
 
@@ -38,7 +44,7 @@ class MacdMomentum(Agent):
     name, style = "2_MACD_Momentum", "momentum: MACD line vs signal, and sign of histogram"
 
     def votes(self, df):
-        line, sig, hist = ind.macd(df["close"])
+        line, sig, hist = ind.macd(df["close"], self.p(12), self.p(26), self.p(9))
         return _vote((line > sig) & (hist > 0), (line < sig) & (hist < 0))
 
 
@@ -46,7 +52,7 @@ class RsiMomentumRegime(Agent):
     name, style = "3_RSI_Regime", "regime: RSI>55 bullish / <45 bearish (not overbought/oversold fade)"
 
     def votes(self, df):
-        r = ind.rsi(df["close"], 14)
+        r = ind.rsi(df["close"], self.p(14))
         return _vote((r > 55) & (r < 80), (r < 45) & (r > 20))
 
 
@@ -54,9 +60,9 @@ class BollingerPosition(Agent):
     name, style = "4_Bollinger_Walk", "volatility: price above/below Bollinger midline, bands expanding"
 
     def votes(self, df):
-        lo, mid, hi = ind.bollinger(df["close"])
+        lo, mid, hi = ind.bollinger(df["close"], self.p(20))
         width = hi - lo
-        expanding = width > width.shift(5)
+        expanding = width > width.shift(self.p(5))
         c = df["close"]
         return _vote((c > mid) & expanding, (c < mid) & expanding)
 
@@ -65,8 +71,9 @@ class DonchianBreakout(Agent):
     name, style = "5_Donchian_Breakout", "breakout: stays long after 20-bar high break until 10-bar low"
 
     def votes(self, df):
-        hi20, lo20 = df["high"].rolling(20).max().shift(), df["low"].rolling(20).min().shift()
-        hi10, lo10 = df["high"].rolling(10).max().shift(), df["low"].rolling(10).min().shift()
+        n20, n10 = self.p(20), self.p(10)
+        hi20, lo20 = df["high"].rolling(n20).max().shift(), df["low"].rolling(n20).min().shift()
+        hi10, lo10 = df["high"].rolling(n10).max().shift(), df["low"].rolling(n10).min().shift()
         c = df["close"].to_numpy()
         h20, l20, h10, l10 = (x.to_numpy() for x in (hi20, lo20, hi10, lo10))
         state = np.zeros(len(df), dtype=int)
@@ -87,7 +94,7 @@ class StochasticBias(Agent):
     name, style = "6_Stochastic_Bias", "oscillator: %K above %D with %K>50 (or below/below)"
 
     def votes(self, df):
-        k, d = ind.stochastic(df)
+        k, d = ind.stochastic(df, self.p(14), self.p(3))
         return _vote((k > d) & (k > 50), (k < d) & (k < 50))
 
 
@@ -95,7 +102,7 @@ class AdxDirectional(Agent):
     name, style = "7_ADX_DI", "trend strength: ADX>20 with +DI/-DI dominance"
 
     def votes(self, df):
-        a, pdi, mdi = ind.adx(df)
+        a, pdi, mdi = ind.adx(df, self.p(14))
         return _vote((a > 20) & (pdi > mdi), (a > 20) & (mdi > pdi))
 
 
@@ -103,7 +110,7 @@ class SupertrendAgent(Agent):
     name, style = "8_Supertrend", "trend: ATR(10)x3 Supertrend direction"
 
     def votes(self, df):
-        d = ind.supertrend_dir(df)
+        d = ind.supertrend_dir(df, self.p(10), 3.0)
         return _vote(d > 0, d < 0)
 
 
@@ -112,8 +119,8 @@ class TimeSeriesMomentum(Agent):
 
     def votes(self, df):
         c = df["close"]
-        r60, r20 = c.pct_change(60), c.pct_change(20)
-        noise = ind.atr(df) / c * 3
+        r60, r20 = c.pct_change(self.p(60)), c.pct_change(self.p(20))
+        noise = ind.atr(df, self.p(14)) / c * 3
         return _vote((r60 > noise) & (r20 > 0), (r60 < -noise) & (r20 < 0))
 
 
@@ -121,7 +128,7 @@ class RegressionChannel(Agent):
     name, style = "10_Linreg_Slope", "statistical: 30-bar regression slope with R^2>0.5"
 
     def votes(self, df):
-        slope, r2 = ind.linreg_slope_r2(df["close"], 30)
+        slope, r2 = ind.linreg_slope_r2(df["close"], self.p(30))
         return _vote((slope > 0) & (r2 > 0.5), (slope < 0) & (r2 > 0.5))
 
 
@@ -177,7 +184,7 @@ def extended_agents(ib_bars: int = 2, ib_start_hour: int = 0) -> list[Agent]:
     return default_agents() + [InsideBarBreakout(), InitialBalanceBreakout(ib_bars, ib_start_hour)]
 
 
-def default_agents() -> list[Agent]:
-    return [EmaTrend(), MacdMomentum(), RsiMomentumRegime(), BollingerPosition(),
-            DonchianBreakout(), StochasticBias(), AdxDirectional(), SupertrendAgent(),
-            TimeSeriesMomentum(), RegressionChannel()]
+def default_agents(scale: float = 1.0) -> list[Agent]:
+    """The 10 agents. scale multiplies every indicator period (use 2.0 on M30 to keep the same time spans as H1)."""
+    return [c(scale) for c in (EmaTrend, MacdMomentum, RsiMomentumRegime, BollingerPosition, DonchianBreakout,
+                               StochasticBias, AdxDirectional, SupertrendAgent, TimeSeriesMomentum, RegressionChannel)]

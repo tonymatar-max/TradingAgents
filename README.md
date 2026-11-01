@@ -143,3 +143,10 @@ Three views per agent: trading alone, committee trades with vs without its agree
 `mt5/XAUUSD_Consensus_EA.mq5` is a port of the bot to MQL5 (votes 8/9/10, per-agent switches and parameters, H4 filter, risk sizing,
 MT5 calendar news filter, dry-run paper trades, same event files for the portal). See `mt5/README.md`. `python -m xauusd_agents parity`
 compares the EA's logged votes with the Python agents; `tests/mql_mirror.py` proves the EA's algorithms equal the Python agents.
+
+## Lower timeframes (M30)
+```
+python -m xauusd_agents export --symbol XAUUSD --timeframe M30 --from 2022-01-01 --out XAUUSD_M30_long.csv
+python -m xauusd_agents agentstats --csv XAUUSD_M30_long.csv --from 2022-01-01 --split 2024-07-01 --sl-atr 2.0 --tp-atr 2.0 --htf-min 6 --htf-tf H1 --agent-scale 2
+```
+`--agent-scale 2` doubles every agent period (same time spans as H1); `--agent-scale 1` keeps the numbers. `--htf-tf H1|H4|D1` picks the confirming timeframe.

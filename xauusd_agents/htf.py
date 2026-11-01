@@ -12,7 +12,7 @@ from .agents import Agent, default_agents
 from .backtest import Config, run_backtest
 from .committee import Committee
 
-RULES = {"H4": "4h", "D1": "1D"}
+RULES = {"H1": "1h", "H4": "4h", "D1": "1D"}
 
 
 def bar_delta(index: pd.DatetimeIndex) -> pd.Timedelta:

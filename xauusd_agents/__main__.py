@@ -36,7 +36,7 @@ def main():
     p.add_argument("--magic", type=int, default=26001, help="mt5: order tag; use a different one per bot when running several")
     p.add_argument("--tfs", default="M15,M30,H1,H4", help="tfscan: comma list of timeframes")
     p.add_argument("--htf-min", type=int, default=0, help="require >= N of 10 agents on the higher timeframe to agree (0 = off)")
-    p.add_argument("--htf-tf", default="H4", choices=["H4", "D1"], help="higher timeframe")
+    p.add_argument("--htf-tf", default="H4", choices=["H1", "H4", "D1"], help="higher timeframe (H1 suits an M30 main chart)")
     p.add_argument("--htf-csv", help="optional CSV of the higher timeframe (else it is built from the main CSV)")
     p.add_argument("--htf-mins", default="0,5,6,7,8,9", help="confluence: values of --htf-min to compare")
     p.add_argument("--balance", type=float, default=10_000.0, help="backtest: starting balance in USD")
@@ -56,10 +56,11 @@ def main():
     p.add_argument("--tps", default="2.0,3.0,4.0", help="optimize: target sizes in ATR to try")
     p.add_argument("--live", action="store_true", help="agentstats: analyse the live/dry-run paper trades in --logdir instead of a backtest")
     p.add_argument("--events", help="parity: the EA's events.jsonl (Common\\Files\\xauusd_ea)")
+    p.add_argument("--agent-scale", type=float, default=1.0, help="multiply every agent period (2.0 on M30 keeps the same time spans as H1)")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
-    agents = extended_agents(a.ib_bars, a.ib_start_hour) if a.agents == 12 else default_agents()
+    agents = extended_agents(a.ib_bars, a.ib_start_hour) if a.agents == 12 else default_agents(a.agent_scale)
     make_com = lambda: Committee(agents, threshold=a.threshold)
 
     def load_htf(df_):

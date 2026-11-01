@@ -36,3 +36,12 @@ Expect ~100% per agent. Small gaps right after the EA starts are normal (indicat
 ## Strategy Tester
 Set `InpMode = RUN_DEMO` (otherwise it only logs), model "Every tick based on real ticks". The MT5 calendar is not available
 in the tester, so the news filter is skipped there. Expect results close to, not identical to, the Python backtest.
+
+## Running on M30 (or another lower timeframe)
+Agent periods are counted in candles, so on M30 they cover half the time they do on H1. Two ways to test:
+1. **Same numbers** (periods unchanged), or
+2. **Doubled periods** (same time spans as H1). Set these inputs: EMA 40/100/400, MACD 24/52/18, RSI 28, Bollinger 40 (lag 10),
+   Donchian 40/20, Stochastic 28/6, ADX 28, Supertrend 20, Momentum 120/40, Regression 60. Also set `InpTF = PERIOD_M30`,
+   `InpHtf = PERIOD_H1`, and `InpHistoryBars = 4000` (the 400-period EMA needs a longer warm-up).
+The EA uses the same agent inputs for the higher timeframe, whereas the Python `--agent-scale` option scales only the main timeframe,
+so run the parity check at default periods (scale 1).

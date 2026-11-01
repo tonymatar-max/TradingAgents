@@ -19,7 +19,7 @@ def load_csv(path: str) -> pd.DataFrame:
     return df[COLS].astype(float).sort_index()
 
 
-def synthetic_xauusd(n: int = 5000, seed: int = 7, start_price: float = 2000.0) -> pd.DataFrame:
+def synthetic_xauusd(n: int = 5000, seed: int = 7, start_price: float = 2000.0, freq: str = "h") -> pd.DataFrame:
     """Synthetic regime-switching hourly gold-like data. FOR DEMO/TESTS ONLY - not real prices."""
     rng = np.random.default_rng(seed)
     drift = np.zeros(n)
@@ -34,5 +34,5 @@ def synthetic_xauusd(n: int = 5000, seed: int = 7, start_price: float = 2000.0) 
     rng_ = np.abs(rng.normal(0, 0.0008, n)) * close
     high = np.maximum(open_, close) + rng_
     low = np.minimum(open_, close) - rng_
-    idx = pd.date_range("2024-01-01", periods=n, freq="h")
+    idx = pd.date_range("2024-01-01", periods=n, freq=freq)
     return pd.DataFrame({"open": open_, "high": high, "low": low, "close": close}, index=idx)
