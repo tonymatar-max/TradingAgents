@@ -119,3 +119,12 @@ python -m xauusd_agents portal                       # http://127.0.0.1:8765 (th
 python -m xauusd_agents portal --host 0.0.0.0 --token MYSECRET   # reachable from phone on your Wi-Fi: http://PC-IP:8765/?token=MYSECRET
 ```
 Shows bot status, latest committee votes, paper (dry-run) trades and equity curve, open paper position, recent decisions, running settings and the news briefing. The bot writes `logs/events.jsonl` and `logs/status.json`; the portal only reads them. In dry-run the bot keeps ONE paper position at a time and closes it when a later candle touches SL/TP (SL first if both).
+
+## Editing settings from the portal
+The page has a "Change settings while the bot is running" panel: lot size (auto risk-based or fixed 0.01-1.00), risk %, max-risk cap, and a pause switch. Saving needs the edit password (printed when the portal starts; stored in `logs/portal_token.txt`, or pass `--token`). The portal writes `logs/settings.json`; the bot re-reads it every cycle (~15 s), validates it again, and logs each change (`logs/settings_audit.jsonl`, `events.jsonl`). "Reset" deletes the file and returns to the command-line settings. Not editable from the web by design: live/dry-run, symbol, threshold, stop/target, H4 filter. Edits are refused from other websites (Host/Origin checks, JSON-only, password).
+
+## Testing unanimity (10 of 10)
+```
+python -m xauusd_agents optimize --csv XAUUSD_H1_long.csv --from 2022-01-01 --split 2024-07-01 --htf-min 6 --thresholds 0.7,0.8,0.9,1.0 --sls 2.0 --tps 2.0
+python -m xauusd_agents backtest --csv XAUUSD_H1_long.csv --from 2022-01-01 --threshold 1.0 --sl-atr 2.0 --tp-atr 2.0 --htf-min 6 --report
+```

@@ -7,12 +7,36 @@ import glob
 import hmac
 import json
 import os
+import secrets
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from . import live_settings as ls
+
 PAGE = Path(__file__).with_name("portal.html")
+MAX_BODY = 2048
+
+
+def edit_token(logdir: str, given: str | None) -> str:
+    """Password required for EDITS (always). --token if given, else a random one kept in logs/portal_token.txt."""
+    if given:
+        return given
+    path = os.path.join(logdir, "portal_token.txt")
+    try:
+        with open(path, encoding="utf-8") as f:
+            tok = f.read().strip()
+        if tok:
+            return tok
+    except OSError:
+        pass
+    os.makedirs(logdir, exist_ok=True)
+    tok = secrets.token_urlsafe(9)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(tok + "\n")
+    return tok
+
 
 
 def _read_events(path: str) -> list[dict]:
@@ -49,6 +73,10 @@ def paper_stats(trades: list[dict], start_balance: float | None) -> dict:
             "best": round(max(pnl), 2), "worst": round(min(pnl), 2), "curve": curve}
 
 
+def _audit(logdir: str) -> list[dict]:
+    return _read_events(os.path.join(logdir, ls.AUDIT))[-6:][::-1]
+
+
 def build_state(logdir: str) -> dict:
     ev = _read_events(os.path.join(logdir, "events.jsonl"))
     try:
@@ -71,10 +99,13 @@ def build_state(logdir: str) -> dict:
                        "signals": len(signals),
                        "buy": len([c for c in candles if c.get("action") == "BUY"]),
                        "sell": len([c for c in candles if c.get("action") == "SELL"])},
-            "news": news}
+            "news": news, "editing": {"file": ls.read(logdir), "limits": ls.LIMITS, "audit": _audit(logdir)}}
 
 
-def make_handler(logdir: str, token: str | None):
+def make_handler(logdir: str, token: str | None, write_token: str | None = None, loopback: bool = True):
+    """token: optional password for READING. write_token: password for EDITING (always enforced)."""
+    write_token = write_token or edit_token(logdir, token)
+
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):  # quiet
             pass
@@ -84,28 +115,72 @@ def make_handler(logdir: str, token: str | None):
             self.send_header("Content-Type", ctype)
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
             self.end_headers()
             self.wfile.write(body)
 
+        def _json(self, code, obj):
+            self._send(code, json.dumps(obj).encode(), "application/json")
+
+        def _read_ok(self, u):
+            if not token:
+                return True
+            given = parse_qs(u.query).get("token", [""])[0] or self.headers.get("X-Token", "")
+            return hmac.compare_digest(given, token)
+
         def do_GET(self):
             u = urlparse(self.path)
-            if token:
-                given = parse_qs(u.query).get("token", [""])[0] or self.headers.get("X-Token", "")
-                if not hmac.compare_digest(given, token):
-                    return self._send(401, b"token required: open /?token=YOUR_TOKEN", "text/plain")
+            if not self._read_ok(u):
+                return self._send(401, b"token required: open /?token=YOUR_TOKEN", "text/plain")
             if u.path == "/api/state":
-                return self._send(200, json.dumps(build_state(logdir)).encode(), "application/json")
+                return self._json(200, build_state(logdir))
             if u.path in ("/", "/index.html"):
                 return self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
             self._send(404, b"not found", "text/plain")
+
+        def do_POST(self):
+            u = urlparse(self.path)
+            host = self.headers.get("Host", "")
+            # 1) DNS-rebinding / cross-site defences (browser pages elsewhere must not be able to edit)
+            if loopback and host.split(":")[0] not in ("127.0.0.1", "localhost"):
+                return self._json(403, {"error": "bad Host header"})
+            origin = self.headers.get("Origin")
+            if origin and urlparse(origin).netloc != host:
+                return self._json(403, {"error": "cross-site request refused"})
+            if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
+                return self._json(415, {"error": "send application/json"})
+            # 2) password
+            if not hmac.compare_digest(self.headers.get("X-Edit-Token", ""), write_token):
+                return self._json(401, {"error": "wrong or missing edit password"})
+            if u.path not in ("/api/settings", "/api/settings/reset"):
+                return self._json(404, {"error": "not found"})
+            who = self.client_address[0]
+            if u.path == "/api/settings/reset":
+                ls.reset(logdir, f"portal {who}")
+                return self._json(200, {"ok": True, "reset": True})
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                if n > MAX_BODY:
+                    return self._json(413, {"error": "body too large"})
+                raw = json.loads(self.rfile.read(n) or b"{}")
+            except ValueError:
+                return self._json(400, {"error": "invalid JSON"})
+            clean, errs = ls.validate(raw)
+            if errs or not clean:
+                return self._json(400, {"error": "; ".join(errs) or "nothing to change"})
+            ls.write(logdir, clean, f"portal {who}")
+            return self._json(200, {"ok": True, "saved": clean,
+                                    "note": "the bot applies it within ~15 seconds"})
 
     return H
 
 
 def serve(logdir="logs", host="127.0.0.1", port=8765, token=None):
-    srv = ThreadingHTTPServer((host, port), make_handler(logdir, token))
+    wt = edit_token(logdir, token)
+    srv = ThreadingHTTPServer((host, port), make_handler(logdir, token, wt, loopback=host in ("127.0.0.1", "localhost")))
     where = "http://%s:%d/" % ("127.0.0.1" if host in ("127.0.0.1", "0.0.0.0") else host, port)
     print(f"Portal running at {where}{'?token=...' if token else ''}  (reading {os.path.abspath(logdir)})  Ctrl+C to stop")
+    print(f"Edit password (needed to change settings on the page): {wt}   [also in {os.path.join(logdir, 'portal_token.txt')}]")
     if host != "127.0.0.1" and not token:
         print("WARNING: reachable from other devices on your network with NO password. Use --token.")
     try:

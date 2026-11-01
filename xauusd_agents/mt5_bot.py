@@ -6,6 +6,7 @@ one position per magic number; daily loss limit; decisions only on CLOSED candle
 from __future__ import annotations
 
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -50,6 +51,9 @@ class Mt5Bot:
             self.events = EventLog(logdir)
             self._logdir = logdir
         self._fresh = None
+        self.paused = False
+        self._startup = {"fixed_lots": fixed_lots, "risk_pct": risk_pct, "max_risk_pct": max_risk_pct, "paused": False}
+        self._ov_mtime = "unset"
         self.clock = clock                      # local UTC epoch seconds (injectable for tests)
         self.fixed_offset = server_utc_offset_hours is not None
         self.server_offset = None if server_utc_offset_hours is None else server_utc_offset_hours * 3600
@@ -105,14 +109,48 @@ class Mt5Bot:
         return pnl <= -self.max_daily_loss_pct * bal
 
     # ---- trading -----------------------------------------------------------
+    def _apply_overrides(self):
+        """Pick up portal edits (logs/settings.json): startup values + validated overrides. Never trust the file."""
+        if not self.events:
+            return
+        from . import live_settings as ls
+        path = os.path.join(self._logdir, ls.FILE)
+        try:
+            mt = os.path.getmtime(path) if os.path.exists(path) else None
+        except OSError:
+            return
+        if mt == self._ov_mtime:
+            return
+        self._ov_mtime = mt
+        vals = dict(self._startup)
+        if mt is not None:
+            clean, errs = ls.validate({k: v for k, v in (ls.read(self._logdir) or {}).items() if k in ls.ALLOWED})
+            for e in errs:
+                log.warning("settings.json ignored a bad value: %s", e)
+            for k, attr in (("lots", "fixed_lots"), ("risk", "risk_pct"), ("max_risk", "max_risk_pct"), ("paused", "paused")):
+                if k in clean:
+                    vals[attr] = clean[k]
+        before = (self.fixed_lots, self.risk_pct, self.max_risk_pct, self.paused)
+        self.fixed_lots, self.risk_pct, self.max_risk_pct, self.paused = (
+            vals["fixed_lots"], vals["risk_pct"], vals["max_risk_pct"], vals["paused"])
+        after = (self.fixed_lots, self.risk_pct, self.max_risk_pct, self.paused)
+        if before != after:
+            log.info("SETTINGS CHANGED from portal: lots=%s risk=%s max_risk=%s paused=%s", *after)
+            self.events.append(type="settings_changed", lots=self.fixed_lots, risk=self.risk_pct,
+                               max_risk=self.max_risk_pct, paused=self.paused)
+
     def _status(self, last_status):
         if not self.events:
             return
         try:
             acc = self.mt5.account_info()
+            info = self.mt5.symbol_info(self.symbol)
             self.events.write_status(
                 mode="DRY RUN" if self.dry_run else "LIVE ORDERS (demo)", symbol=self.symbol,
-                last_bar=str(self.last_bar), last_status=last_status, settings=self.describe,
+                last_bar=str(self.last_bar), last_status=last_status,
+                settings={**self.describe, "lots": self.fixed_lots, "risk": self.risk_pct,
+                          "max_risk": self.max_risk_pct, "paused": self.paused},
+                usd_per_dollar_per_lot=info.trade_tick_value / info.trade_tick_size,
                 server_offset_h=None if self.server_offset is None else self.server_offset / 3600,
                 balance=getattr(acc, "balance", None), equity=getattr(acc, "equity", None),
                 paper_open=self.paper.open if self.paper else None,
@@ -123,6 +161,7 @@ class Mt5Bot:
     def step(self) -> str:
         """Run one decision cycle (records events for the portal). Returns a short status string."""
         self._fresh = None
+        self._apply_overrides()
         status = self._step()
         if self.events and status != "waiting for new candle":
             if self._fresh:
@@ -162,6 +201,8 @@ class Mt5Bot:
                  self.symbol, bar_time, d.action, d.buy, d.sell, d.neutral, d.required)
         if d.action == "HOLD":
             return "HOLD"
+        if self.paused:
+            return f"{d.action} signal ignored: paused from the portal"
         if self.has_position():
             return f"{d.action} signal ignored: position already open"
         if self.htf_min:

@@ -51,6 +51,9 @@ def main():
     p.add_argument("--port", type=int, default=8765, help="portal port")
     p.add_argument("--host", default="127.0.0.1", help="portal host (use 0.0.0.0 to open it to your network, with --token)")
     p.add_argument("--token", default=None, help="portal: require ?token=... (recommended with --host 0.0.0.0)")
+    p.add_argument("--thresholds", default="0.7,0.8,0.9", help="optimize: thresholds to try, e.g. 0.8,0.9,1.0 (1.0 = all 10 agents)")
+    p.add_argument("--sls", default="1.0,1.5,2.0", help="optimize: stop sizes in ATR to try")
+    p.add_argument("--tps", default="2.0,3.0,4.0", help="optimize: target sizes in ATR to try")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
@@ -78,8 +81,7 @@ def main():
         if not (a.start and a.split):
             raise SystemExit("tfscan needs --from and --split")
         res = scan_mt5(a.symbol, a.tfs.split(","), a.start, a.end, a.split, thr=a.threshold, sl=a.sl_atr,
-                       tp=a.tp_atr, spread=a.spread, risk=a.risk, agents=agents,
-                    htf=load_htf(df) if a.htf_min else None, htf_min=a.htf_min)
+                       tp=a.tp_atr, spread=a.spread, risk=a.risk, agents=agents)
         print(f"\nSame settings on every timeframe: thr={a.threshold} sl={a.sl_atr} tp={a.tp_atr} spread={a.spread}")
         print(f"train = {a.start} -> {a.split}, test = {a.split} -> end (test never used to choose settings)\n")
         print(res.to_string(index=False))
@@ -168,7 +170,10 @@ def main():
         from .optimize import sweep
         if not (a.start and a.split):
             raise SystemExit("optimize needs --from (train start) and --split (test start)")
-        res = sweep(df, a.start, a.split, spread=a.spread, risk=a.risk, agents=agents)
+        res = sweep(df, a.start, a.split, spread=a.spread, risk=a.risk, agents=agents,
+                    htf=load_htf(df) if a.htf_min else None, htf_min=a.htf_min,
+                    thresholds=tuple(float(x) for x in a.thresholds.split(",")),
+                    sls=tuple(float(x) for x in a.sls.split(",")), tps=tuple(float(x) for x in a.tps.split(",")))
         if res.empty:
             raise SystemExit("No setting produced >= 20 trades in both periods.")
         print(f"Train: {a.start} -> {a.split} | Test: {a.split} -> {df.index[-1]} | sorted by WORST of the two profit factors")

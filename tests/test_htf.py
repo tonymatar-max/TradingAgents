@@ -74,3 +74,36 @@ class SweepHtf(unittest.TestCase):
         r = sweep(ltf, "2024-02-01", "2024-04-01", thresholds=(0.9,), sls=(1.5,), tps=(2.0,),
                   htf=resample_ohlc(ltf, "4h"), htf_min=6)
         self.assertFalse(r.empty)
+
+
+class CliPaths(unittest.TestCase):
+    """Run the real command line: these catch arguments that never reach the function (a past bug)."""
+    @classmethod
+    def setUpClass(cls):
+        import os, subprocess, sys, tempfile
+        cls.sub, cls.sys = subprocess, sys
+        d = tempfile.mkdtemp()
+        cls.csv = os.path.join(d, "s.csv")
+        synthetic_xauusd(4000).rename_axis("time").to_csv(cls.csv)
+
+    def run_cli(self, *args):
+        r = self.sub.run([self.sys.executable, "-m", "xauusd_agents", *args], capture_output=True, text=True, timeout=300)
+        self.assertEqual(r.returncode, 0, r.stderr[-800:])
+        return r.stdout
+
+    def test_optimize_htf_flag_changes_results(self):
+        base = ("optimize", "--csv", self.csv, "--from", "2024-02-01", "--split", "2024-04-15",
+                "--thresholds", "0.8", "--sls", "2.0", "--tps", "2.0")
+        self.assertNotEqual(self.run_cli(*base), self.run_cli(*base, "--htf-min", "6"))
+
+    def test_optimize_custom_grid_includes_unanimous(self):
+        out = self.run_cli("optimize", "--csv", self.csv, "--from", "2024-02-01", "--split", "2024-04-15",
+                           "--thresholds", "0.8,1.0", "--sls", "2.0", "--tps", "2.0")
+        self.assertIn("1.0", out)
+
+    def test_tfscan_arguments_reach_scan(self):
+        import inspect
+        from xauusd_agents.tfscan import scan_mt5
+        self.assertNotIn("htf", inspect.signature(scan_mt5).parameters)  # tfscan takes no htf argument
+        import xauusd_agents.__main__ as m
+        self.assertNotIn("htf=load_htf", inspect.getsource(m).split('cmd == "tfscan"')[1].split("return")[0])

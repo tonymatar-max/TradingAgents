@@ -109,3 +109,90 @@ class Server(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Editing(unittest.TestCase):
+    def serve(self, d):
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(d, None, "pw123", loopback=True))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        return "http://127.0.0.1:%d" % srv.server_address[1]
+
+    def post(self, base, path, body, headers=None):
+        h = {"Content-Type": "application/json", "X-Edit-Token": "pw123", **(headers or {})}
+        req = urllib.request.Request(base + path, data=json.dumps(body).encode(), headers=h, method="POST")
+        try:
+            r = urllib.request.urlopen(req); return r.status, json.load(r)
+        except urllib.error.HTTPError as e:
+            return e.code, json.load(e)
+
+    def test_validate_limits(self):
+        from xauusd_agents import live_settings as ls
+        self.assertEqual(ls.validate({"lots": 0.1, "risk": 0.01, "paused": True})[1], [])
+        self.assertTrue(ls.validate({"lots": 5})[1]);        self.assertTrue(ls.validate({"lots": 0})[1])
+        self.assertTrue(ls.validate({"risk": 0.5})[1]);      self.assertTrue(ls.validate({"live_orders": True})[1])
+        self.assertTrue(ls.validate({"lots": float("nan")})[1]); self.assertTrue(ls.validate({"paused": "yes"})[1])
+        self.assertEqual(ls.validate({"lots": None})[0], {"lots": None})   # null = auto sizing
+
+    def test_save_requires_password_and_valid_values(self):
+        d = tempfile.mkdtemp(); base = self.serve(d)
+        self.assertEqual(self.post(base, "/api/settings", {"lots": 0.1}, {"X-Edit-Token": "nope"})[0], 401)
+        self.assertEqual(self.post(base, "/api/settings", {"lots": 9})[0], 400)
+        self.assertEqual(self.post(base, "/api/settings", {"live_orders": True})[0], 400)
+        self.assertFalse(os.path.exists(os.path.join(d, "settings.json")))
+        code, j = self.post(base, "/api/settings", {"lots": 0.1, "max_risk": 0.1})
+        self.assertEqual(code, 200); self.assertEqual(json.load(open(os.path.join(d, "settings.json")))["lots"], 0.1)
+        st = json.load(urllib.request.urlopen(base + "/api/state"))
+        self.assertEqual(st["editing"]["file"]["lots"], 0.1); self.assertEqual(len(st["editing"]["audit"]), 1)
+        self.assertEqual(self.post(base, "/api/settings/reset", {})[0], 200)
+        self.assertFalse(os.path.exists(os.path.join(d, "settings.json")))
+
+    def test_cross_site_and_wrong_content_type_refused(self):
+        base = self.serve(tempfile.mkdtemp())
+        self.assertEqual(self.post(base, "/api/settings", {"lots": 0.1}, {"Origin": "http://evil.example"})[0], 403)
+        self.assertEqual(self.post(base, "/api/settings", {"lots": 0.1}, {"Host": "evil.example"})[0], 403)
+        self.assertEqual(self.post(base, "/api/settings", {"lots": 0.1}, {"Content-Type": "text/plain"})[0], 415)
+
+    def test_token_file_created_once(self):
+        from xauusd_agents.portal import edit_token
+        d = tempfile.mkdtemp(); t = edit_token(d, None)
+        self.assertGreaterEqual(len(t), 10); self.assertEqual(edit_token(d, None), t)
+        self.assertEqual(edit_token(d, "mine"), "mine")
+
+
+class BotAppliesEdits(unittest.TestCase):
+    def mk(self):
+        d = tempfile.mkdtemp()
+        m = FakeMT5(); b = bot(m, dry=False); b.events = EventLog(d); b._logdir = d; b.connect()
+        return d, m, b
+
+    def test_fixed_lot_pause_and_reset(self):
+        from xauusd_agents import live_settings as ls
+        d, m, b = self.mk()
+        ls.write(d, {"lots": 0.07, "max_risk": 0.0}, "test")
+        out = b.step()
+        self.assertTrue(out.startswith("PLACED BUY 0.07 "), out); self.assertEqual(m.sent[0]["volume"], 0.07)
+        # pause: no new order even with a fresh strong signal
+        m.pos, b.last_bar = [], None
+        ls.write(d, {"paused": True}, "test")
+        self.assertIn("paused from the portal", b.step()); self.assertEqual(len(m.sent), 1)
+        # reset: back to startup settings (auto sizing, not paused)
+        ls.reset(d, "test"); b.last_bar = None
+        out = b.step()
+        self.assertFalse(b.paused); self.assertIsNone(b.fixed_lots)
+        self.assertTrue(out.startswith("PLACED BUY"), out)      # trading again, auto-sized
+        ev = [json.loads(l) for l in open(os.path.join(d, "events.jsonl"))]
+        self.assertTrue(any(e["type"] == "settings_changed" for e in ev))
+
+    def test_bad_values_in_file_are_ignored(self):
+        d, m, b = self.mk()
+        with open(os.path.join(d, "settings.json"), "w") as f:
+            json.dump({"lots": 99, "risk": 0.01}, f)           # lots out of range
+        b.step()
+        self.assertIsNone(b.fixed_lots)
+
+    def test_cap_skips_wide_stop(self):
+        from xauusd_agents import live_settings as ls
+        d, m, b = self.mk()
+        ls.write(d, {"lots": 1.0, "max_risk": 0.0001}, "test")
+        self.assertIn("exceeds", b.step()); self.assertEqual(m.sent, [])

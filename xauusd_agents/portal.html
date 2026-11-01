@@ -61,6 +61,20 @@
   svg text { fill: var(--muted); font-size: 11px; }
   .empty { color: var(--muted); padding: 10px 0; }
   .note { font-size: 12.5px; color: var(--muted); margin-top: 18px; }
+  .form { display: grid; gap: 12px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  .row label { min-width: 150px; color: var(--muted); }
+  input[type=number], input[type=password] { font: inherit; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; width: 120px; }
+  input[type=password] { width: 190px; }
+  input:disabled { opacity: .45; }
+  button.primary { background: var(--accent); color: #fff; border-color: transparent; font-weight: 600; }
+  button.danger { color: var(--sell); }
+  .preview { padding: 9px 12px; border-radius: 8px; background: var(--neu-bg); font-size: 13.5px; }
+  .preview.warn { background: var(--warn-bg); color: var(--warn); }
+  .msg { min-height: 1.3em; font-size: 13.5px; }
+  .msg.ok { color: var(--buy); } .msg.err { color: var(--sell); }
+  .hint { font-size: 12.5px; color: var(--muted); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
 <body>
@@ -99,6 +113,44 @@
       <div id="settings"></div>
     </section>
   </div>
+
+  <section class="card" style="margin-bottom:12px" aria-labelledby="h-edit">
+    <h2 id="h-edit">Change settings while the bot is running</h2>
+    <div class="form">
+      <div class="row">
+        <label for="mode-auto">Lot size</label>
+        <label style="min-width:0;color:var(--ink)"><input type="radio" name="lotmode" id="mode-auto" value="auto"> Auto (risk-based)</label>
+        <label style="min-width:0;color:var(--ink)"><input type="radio" name="lotmode" id="mode-fixed" value="fixed"> Fixed</label>
+        <input type="number" id="lots" min="0.01" max="1" step="0.01" aria-label="Fixed lot size">
+        <span class="hint">0.01 – 1.00 lots</span>
+      </div>
+      <div class="row">
+        <label for="risk">Risk per trade (auto)</label>
+        <input type="number" id="risk" min="0.1" max="3" step="0.1"> <span>% of equity</span>
+        <span class="hint">0.1 – 3 %</span>
+      </div>
+      <div class="row">
+        <label for="maxrisk">Max risk cap (fixed lots)</label>
+        <input type="number" id="maxrisk" min="0" max="25" step="1"> <span>% of equity</span>
+        <span class="hint">trades whose stop would risk more are skipped; 0 = no cap</span>
+      </div>
+      <div class="row">
+        <label for="paused">Pause new trades</label>
+        <input type="checkbox" id="paused"> <span class="hint">the bot keeps analysing and logging, but opens nothing. Existing positions keep their stop and target.</span>
+      </div>
+      <div id="preview" class="preview" aria-live="polite">–</div>
+      <div class="row">
+        <label for="pwd">Edit password</label>
+        <input type="password" id="pwd" autocomplete="off" placeholder="from logs\portal_token.txt">
+        <button type="button" class="primary" id="save">Save</button>
+        <button type="button" class="danger" id="reset">Reset to startup settings</button>
+      </div>
+      <div id="msg" class="msg" role="status" aria-live="polite"></div>
+      <div id="applied" class="hint" aria-live="polite"></div>
+      <div class="hint">Not editable here, on purpose: switching to live orders, the symbol, and the strategy settings (threshold, stop, target, H4 filter). They were tested together, so change them on the command line. The bot applies saves within ~15 seconds and logs every change.</div>
+      <div class="scroll" id="audit"></div>
+    </div>
+  </section>
 
   <section class="card" style="margin-bottom:12px" aria-labelledby="h-trades">
     <h2 id="h-trades">Paper trades (closed)</h2>
@@ -227,11 +279,84 @@ function curveSvg(c) {
     <text x="${W - R}" y="${H - 6}" text-anchor="end">${c.length} trades · now ${money(last)}</text></svg>`;
 }
 
+
+// ---------- editing ----------
+let dirty = false, last = null;
+const qs = token ? "?token=" + encodeURIComponent(token) : "";
+try { $("pwd").value = sessionStorage.getItem("editpwd") || ""; } catch (e) {}
+["mode-auto", "mode-fixed", "lots", "risk", "maxrisk", "paused"].forEach(id => $(id).addEventListener("input", () => { dirty = true; updatePreview(); }));
+
+function fillForm(s) {
+  const run = (s.status && s.status.settings) || {};
+  const f = (s.editing || {}).file;
+  // show what is SAVED (so the form does not snap back before the bot has applied it); fall back to what is running
+  const set = f ? { ...run, lots: f.lots !== undefined ? f.lots : run.lots, risk: f.risk ?? run.risk, max_risk: f.max_risk ?? run.max_risk, paused: f.paused ?? run.paused } : run;
+  const same = !f || (["lots", "risk", "max_risk", "paused"].every(k => f[k] === undefined || f[k] === run[k]));
+  $("applied").textContent = !f ? "Running with the startup settings." :
+    same ? "Saved settings are in effect (the bot is running with them)." :
+    "Saved, but the bot has not applied them yet. It checks every ~15 seconds. If this stays, the bot is not running.";
+  if (dirty) return;
+  const fixed = set.lots !== null && set.lots !== undefined && set.lots !== "";
+  $("mode-fixed").checked = fixed; $("mode-auto").checked = !fixed;
+  $("lots").value = fixed ? set.lots : 0.01;
+  $("risk").value = set.risk != null ? +(set.risk * 100).toFixed(2) : 1;
+  $("maxrisk").value = set.max_risk != null ? Math.round(set.max_risk * 100) : 10;
+  $("paused").checked = !!set.paused;
+  updatePreview();
+}
+function updatePreview() {
+  const s = last; const el = $("preview");
+  const fixed = $("mode-fixed").checked;
+  $("lots").disabled = !fixed; $("maxrisk").disabled = !fixed; $("risk").disabled = fixed;
+  if (!s || !s.status) { el.textContent = "No bot data yet."; el.className = "preview"; return; }
+  const ref = (s.paper.open) || (s.signals[0]);
+  const eq = s.status.equity, per = s.status.usd_per_dollar_per_lot || 100;
+  if (!ref || !eq) { el.textContent = "A risk preview appears after the first signal."; el.className = "preview"; return; }
+  const dist = Math.abs(ref.entry - ref.sl);
+  let text, bad = false;
+  if (fixed) {
+    const lots = +$("lots").value || 0, usd = lots * per * dist, pct = 100 * usd / eq, cap = +$("maxrisk").value;
+    text = `At the last signal's stop ($${dist.toFixed(2)} away), ${lots.toFixed(2)} lots would risk about ${money(usd)} = ${pct.toFixed(1)}% of equity.`;
+    if (cap > 0 && pct > cap) { text += ` That is above your ${cap}% cap, so a trade like it would be SKIPPED.`; bad = true; }
+    else if (pct > 5) { text += " That is a large risk per trade."; bad = true; }
+  } else {
+    const r = (+$("risk").value || 0) / 100, usd = r * eq, lots = usd / (per * dist);
+    text = `Auto sizing: risking ${(r * 100).toFixed(1)}% = ${money(usd)} on a $${dist.toFixed(2)} stop gives about ${lots.toFixed(3)} lots (rounded down to the broker's step; minimum lot applies).`;
+  }
+  el.textContent = text; el.className = "preview" + (bad ? " warn" : "");
+}
+function say(t, ok) { const m = $("msg"); m.textContent = t; m.className = "msg " + (ok ? "ok" : "err"); }
+async function post(path, body) {
+  const pwd = $("pwd").value;
+  try { sessionStorage.setItem("editpwd", pwd); } catch (e) {}
+  const r = await fetch("api/settings" + path + qs, { method: "POST", headers: { "Content-Type": "application/json", "X-Edit-Token": pwd }, body: JSON.stringify(body || {}) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+$("save").onclick = async () => {
+  const fixed = $("mode-fixed").checked;
+  const body = { lots: fixed ? +$("lots").value : null, risk: (+$("risk").value) / 100, max_risk: (+$("maxrisk").value) / 100, paused: $("paused").checked };
+  const pv = $("preview");
+  if (pv.classList.contains("warn") && !confirm("The preview shows a warning:\n\n" + pv.textContent + "\n\nSave anyway?")) return;
+  try { const j = await post("", body); dirty = false; say("Saved. " + j.note, true); tick(); }
+  catch (e) { say("Not saved: " + e.message, false); }
+};
+$("reset").onclick = async () => {
+  if (!confirm("Go back to the settings the bot was started with?")) return;
+  try { await post("/reset"); dirty = false; say("Reset. The bot returns to its startup settings within ~15 seconds.", true); tick(); }
+  catch (e) { say("Not reset: " + e.message, false); }
+};
+function renderAudit(a) {
+  $("audit").innerHTML = a && a.length ? `<table><thead><tr><th>Change log</th><th>By</th><th>What</th></tr></thead><tbody>` +
+    a.map(x => `<tr><td>${esc(x.ts)}</td><td>${esc(x.by)}</td><td>${esc(x.action === "reset" ? "reset to startup settings" : Object.entries(x.new || {}).map(([k, v]) => k + ": " + (x.old && x.old[k] != null ? x.old[k] : "–") + " → " + (v === null ? "auto" : v)).join(", "))}</td></tr>`).join("") + "</tbody></table>" : "";
+}
+
 async function tick() {
   try {
     const r = await fetch("api/state" + (token ? "?token=" + encodeURIComponent(token) : ""), { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
-    render(await r.json());
+    const j = await r.json(); last = j; render(j); fillForm(j); updatePreview(); renderAudit((j.editing || {}).audit);
   } catch (e) {
     const live = $("live"); live.className = "pill bad"; live.lastChild.textContent = "portal cannot read data (" + e.message + ")";
   }
