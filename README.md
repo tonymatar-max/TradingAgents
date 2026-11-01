@@ -40,3 +40,10 @@ python -m xauusd_agents mt5 --symbol XAUUSD --timeframe H1                 # DRY
 python -m xauusd_agents mt5 --symbol XAUUSD --timeframe H1 --live-orders   # sends orders (demo account only)
 ```
 Safeguards: refuses non-demo accounts; decides only on closed candles; one position at a time; 3% daily loss limit; every order has SL+TP; lot size rounded down to broker step. Use your broker's gold symbol name (e.g. `GOLD`, `XAUUSD.m`).
+
+## Backtest on real MT5 data from a start date
+```
+python -m xauusd_agents export   --symbol XAUUSD --timeframe H1 --from 2026-01-01 --out xauusd_h1.csv
+python -m xauusd_agents backtest --csv xauusd_h1.csv --from 2026-01-01 --spread 0.30
+```
+Earlier candles are loaded only to warm up the indicators; trades start at `--from`. Add `--to YYYY-MM-DD` to cap the end.

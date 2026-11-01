@@ -55,3 +55,11 @@ class T(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStart(unittest.TestCase):
+    def test_no_trades_before_start(self):
+        df = synthetic_xauusd(3000)
+        start = df.index[1800]
+        trades, _, _ = run_backtest(df, start=start)
+        self.assertTrue(trades.empty or (df.index[trades.entry_i] >= start).all())
