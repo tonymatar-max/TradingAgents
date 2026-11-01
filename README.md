@@ -87,3 +87,9 @@ python -m xauusd_agents mt5 --symbol XAUUSD --timeframe H1 --threshold 0.9 --sl-
 python -m xauusd_agents backtest --csv XAUUSD_H1.csv --from 2026-01-01 --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --htf-min 7 --balance 5000 --lots 1 --report
 ```
 `--balance` sets the start balance, `--lots` forces a fixed lot size (1 lot = 100 oz). Add `--leverage 100` (your broker's leverage) and `--stopout 0.5` to model margin: orders you cannot afford are rejected and positions are force-closed at the stop-out level (reason `STOPOUT`). Extra output: `lowest_equity`, `worst_loss_%_of_equity`, `stop_outs`. Gaps/slippage are still not modelled.
+
+## Dry run with a fixed lot
+```
+python -m xauusd_agents mt5 --symbol XAUUSD --timeframe H1 --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --htf-min 7 --news --lots 0.1 --magic 26003
+```
+`--lots` replaces risk-based sizing; every log line shows the dollar risk and % of equity. `--max-risk 0.10` (default) skips any trade whose stop would risk more than 10% of equity; `--max-risk 0` removes the cap. Add `--list-trades` to a backtest to print each trade and compare it with the bot log.

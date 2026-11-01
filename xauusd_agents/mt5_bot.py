@@ -33,7 +33,7 @@ def lot_size(equity, risk_pct, stop_dist, info) -> float:
 class Mt5Bot:
     def __init__(self, mt5, symbol="XAUUSD", timeframe="H1", committee=None, risk_pct=0.01,
                  sl_atr=1.5, tp_atr=3.0, max_daily_loss_pct=0.03, magic=26001, dry_run=True,
-                 bars=500, deviation=30, news=None, htf_min=0, htf_tf="H4", htf_agents=None):
+                 bars=500, deviation=30, news=None, htf_min=0, htf_tf="H4", htf_agents=None, fixed_lots=None, max_risk_pct=0.10):
         self.mt5, self.symbol, self.dry_run = mt5, symbol, dry_run
         self.tf = getattr(mt5, f"TIMEFRAME_{timeframe}")
         self.committee = committee or Committee()
@@ -41,6 +41,7 @@ class Mt5Bot:
         self.max_daily_loss_pct, self.magic, self.bars, self.deviation = max_daily_loss_pct, magic, bars, deviation
         self.last_bar, self.news = None, news
         self.htf_min, self.htf_tf, self.htf_agents = htf_min, htf_tf, htf_agents
+        self.fixed_lots, self.max_risk_pct = fixed_lots, max_risk_pct
 
     # ---- setup -------------------------------------------------------------
     def connect(self):
@@ -129,10 +130,22 @@ class Mt5Bot:
         sl_d, tp_d = max(self.sl_atr * atr_val, min_dist), max(self.tp_atr * atr_val, min_dist)
         sign = 1 if buy else -1
         sl, tp = round(price - sign * sl_d, info.digits), round(price + sign * tp_d, info.digits)
-        lots = lot_size(m.account_info().equity, self.risk_pct, sl_d, info)
+        equity = m.account_info().equity
+        if self.fixed_lots:
+            step = info.volume_step
+            lots = round(min(info.volume_max, max(info.volume_min, round(self.fixed_lots / step) * step)), 8)
+        else:
+            lots = lot_size(equity, self.risk_pct, sl_d, info)
         if lots <= 0:
             return f"{action} skipped: risk budget below broker minimum lot"
-        msg = f"{action} {lots} {self.symbol} @ {price} SL {sl} TP {tp}"
+        risk_money = lots * sl_d / info.trade_tick_size * info.trade_tick_value
+        risk_pct = risk_money / equity
+        if self.fixed_lots and self.max_risk_pct and risk_pct > self.max_risk_pct:
+            log.info("%s skipped: stop %.2f away would risk $%.0f = %.1f%% of equity (cap %.0f%%)",
+                     action, sl_d, risk_money, 100 * risk_pct, 100 * self.max_risk_pct)
+            return f"{action} skipped: risk {risk_pct:.1%} of equity exceeds the {self.max_risk_pct:.0%} cap"
+        msg = (f"{action} {lots} {self.symbol} @ {price} SL {sl} TP {tp}  "
+               f"[risk ${risk_money:.0f} = {risk_pct:.1%} of equity]")
         if self.dry_run:
             log.info("DRY-RUN would place: %s", msg)
             return "DRY-RUN " + msg

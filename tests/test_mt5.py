@@ -92,3 +92,20 @@ class T(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFixedLotsBot(unittest.TestCase):
+    def test_fixed_lot_placed_with_risk_in_log(self):
+        m = FakeMT5(); b = bot(m, dry=False); b.fixed_lots = 0.1; b.connect()
+        out = b.step()
+        self.assertTrue(out.startswith("PLACED BUY 0.1 "), out)
+        self.assertIn("risk $", out)
+        self.assertEqual(m.sent[0]["volume"], 0.1)
+
+    def test_risk_cap_skips_wide_stops(self):
+        m = FakeMT5(); b = bot(m, dry=False); b.fixed_lots = 0.1; b.max_risk_pct = 0.00001; b.connect()
+        self.assertIn("exceeds", b.step()); self.assertEqual(m.sent, [])
+
+    def test_cap_off_with_zero(self):
+        m = FakeMT5(); b = bot(m, dry=False); b.fixed_lots = 0.1; b.max_risk_pct = 0; b.connect()
+        self.assertTrue(b.step().startswith("PLACED"))

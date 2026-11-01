@@ -43,6 +43,8 @@ def main():
     p.add_argument("--lots", type=float, default=None, help="backtest: fixed lot size per trade (1 lot = 100 oz); default = risk-based sizing")
     p.add_argument("--leverage", type=float, default=0.0, help="backtest: account leverage, e.g. 100 for 1:100 (0 = ignore margin)")
     p.add_argument("--stopout", type=float, default=0.5, help="backtest: broker stop-out level as fraction of margin (0.5 = 50%%)")
+    p.add_argument("--max-risk", type=float, default=0.10, help="mt5 with --lots: skip trades whose stop would risk more than this fraction of equity (0 = no cap)")
+    p.add_argument("--list-trades", action="store_true", help="backtest: print every trade (to compare with the bot log)")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
@@ -106,7 +108,7 @@ def main():
         news = NewsFilter(a.news_before, a.news_after) if a.news else None
         Mt5Bot(mt5, a.symbol, a.timeframe, make_com(), news=news, risk_pct=a.risk,
                sl_atr=a.sl_atr, tp_atr=a.tp_atr, magic=a.magic,
-               htf_min=a.htf_min, htf_tf=a.htf_tf, dry_run=not a.live_orders).run()
+               htf_min=a.htf_min, htf_tf=a.htf_tf, fixed_lots=a.lots, max_risk_pct=a.max_risk, dry_run=not a.live_orders).run()
         return
 
     df = synthetic_xauusd() if a.cmd == "demo" else load_csv(a.csv)
@@ -146,6 +148,11 @@ def main():
     print(f"Committee needs {com.required}/{len(com.agents)} agents to agree")
     for k, v in stats.items():
         print(f"  {k}: {v}")
+    if a.list_trades and len(trades):
+        print("\nTrades (broker-clock candle times; entry is the open of the candle after the signal):")
+        for _, r in trades.iterrows():
+            print(f"  {df.index[int(r.entry_i)]}  {'BUY ' if r['dir'] == 1 else 'SELL'}  entry {r.entry:.2f}  SL {r.sl:.2f}  "
+                  f"TP {r.tp:.2f}  exit {r['exit']:.2f} {r.reason:7s} pnl {r.pnl:9.2f}")
     if a.report and len(trades):
         t = trades.copy()
         t["month"] = df.index[t.exit_i].to_period("M")
