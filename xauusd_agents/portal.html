@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XAUUSD Agents Portal</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --ink: #14181f; --muted: #5b6573; --line: #e2e6ec;
+    --buy: #0b7a4b; --buy-bg: #dff3e9; --sell: #b3261e; --sell-bg: #fbe3e1; --neu: #5b6573; --neu-bg: #eceff3;
+    --accent: #1f5fd1; --warn: #9a5b00; --warn-bg: #fff1d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1319; --card: #171d26; --ink: #e8ecf2; --muted: #9aa5b4; --line: #2a3340;
+      --buy: #4fd39a; --buy-bg: #12382a; --sell: #ff8d84; --sell-bg: #45201d; --neu: #9aa5b4; --neu-bg: #232b36;
+      --accent: #7aa7ff; --warn: #ffc56b; --warn-bg: #3d2f12;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1319; --card: #171d26; --ink: #e8ecf2; --muted: #9aa5b4; --line: #2a3340;
+    --buy: #4fd39a; --buy-bg: #12382a; --sell: #ff8d84; --sell-bg: #45201d; --neu: #9aa5b4; --neu-bg: #232b36;
+    --accent: #7aa7ff; --warn: #ffc56b; --warn-bg: #3d2f12;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
+  h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .6px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; background: var(--neu-bg); color: var(--neu); }
+  .pill.ok { background: var(--buy-bg); color: var(--buy); }
+  .pill.bad { background: var(--sell-bg); color: var(--sell); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .spacer { flex: 1; }
+  button { font: inherit; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+  .grid { display: grid; gap: 12px; }
+  .kpis { grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); margin-bottom: 12px; }
+  .two { grid-template-columns: 1fr 1fr; margin-bottom: 12px; }
+  @media (max-width: 820px) { .two { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+  .kpi .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .kpi .l { color: var(--muted); font-size: 12.5px; }
+  .chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin: 10px 0; }
+  .chip { display: flex; justify-content: space-between; gap: 6px; padding: 6px 9px; border-radius: 8px; font-size: 13px; background: var(--neu-bg); color: var(--neu); }
+  .chip b { font-weight: 700; }
+  .chip.BUY { background: var(--buy-bg); color: var(--buy); }
+  .chip.SELL { background: var(--sell-bg); color: var(--sell); }
+  .tally { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: baseline; }
+  .big { font-size: 22px; font-weight: 700; }
+  .BUY-t { color: var(--buy); } .SELL-t { color: var(--sell); } .HOLD-t { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.num, th.num { text-align: right; }
+  .scroll { overflow-x: auto; }
+  .pos { color: var(--buy); font-weight: 600; } .neg { color: var(--sell); font-weight: 600; }
+  .muted { color: var(--muted); }
+  pre { margin: 0; white-space: pre-wrap; font: 12.5px/1.5 ui-monospace, Menlo, Consolas, monospace; color: var(--ink); }
+  svg text { fill: var(--muted); font-size: 11px; }
+  .empty { color: var(--muted); padding: 10px 0; }
+  .note { font-size: 12.5px; color: var(--muted); margin-top: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>XAUUSD 10-Agent Portal</h1>
+    <span id="live" class="pill"><span class="dot"></span><span>connecting…</span></span>
+    <span id="mode" class="pill"></span>
+    <span class="spacer"></span>
+    <span id="upd" class="muted"></span>
+    <button id="theme" type="button" aria-label="Toggle light or dark theme">Theme</button>
+  </header>
+
+  <div class="grid kpis" id="kpis"></div>
+
+  <div class="grid two">
+    <section class="card" aria-labelledby="h-board">
+      <h2 id="h-board">Committee: latest candle</h2>
+      <div id="board"></div>
+    </section>
+    <section class="card" aria-labelledby="h-curve">
+      <h2 id="h-curve">Paper equity curve (cumulative P&amp;L, USD)</h2>
+      <div id="curve"></div>
+    </section>
+  </div>
+
+  <div class="grid two">
+    <section class="card" aria-labelledby="h-open">
+      <h2 id="h-open">Open paper position</h2>
+      <div id="open"></div>
+      <h2 style="margin-top:16px" id="h-news">News briefing</h2>
+      <pre id="news" class="muted">–</pre>
+    </section>
+    <section class="card" aria-labelledby="h-settings">
+      <h2 id="h-settings">Running settings</h2>
+      <div id="settings"></div>
+    </section>
+  </div>
+
+  <section class="card" style="margin-bottom:12px" aria-labelledby="h-trades">
+    <h2 id="h-trades">Paper trades (closed)</h2>
+    <div class="scroll" id="trades"></div>
+  </section>
+
+  <section class="card" style="margin-bottom:12px" aria-labelledby="h-dec">
+    <h2 id="h-dec">Recent candle decisions</h2>
+    <div class="scroll" id="decisions"></div>
+  </section>
+
+  <p class="note">Dry-run results are <b>paper trades</b>: the bot records each "would place" signal and closes it when a later candle touches its stop or target (stop first if both). They ignore slippage and are slightly optimistic for shorts. Not financial advice.</p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const money = v => (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const cls = v => v > 0 ? "pos" : v < 0 ? "neg" : "";
+const short = n => String(n).replace(/^\d+_/, "").replace(/_/g, " ");
+const token = new URLSearchParams(location.search).get("token");
+
+try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+$("theme").onclick = () => {
+  const cur = document.documentElement.dataset.theme ||
+    (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const next = cur === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("theme", next); } catch (e) {}
+};
+
+function kpi(label, value, c) { return `<div class="card kpi"><div class="v ${c || ""}">${value}</div><div class="l">${label}</div></div>`; }
+
+function render(s) {
+  const st = s.status;
+  const live = $("live"), mode = $("mode");
+  if (!st) {
+    live.className = "pill bad"; live.lastChild.textContent = "no data yet - is the bot running?";
+    mode.textContent = "";
+  } else {
+    const age = s.age_s;
+    const ok = age < 180;
+    live.className = "pill " + (ok ? "ok" : "bad");
+    live.lastChild.textContent = ok ? "bot running" : `bot silent for ${Math.round(age / 60)} min`;
+    mode.className = "pill " + (/LIVE/.test(st.mode) ? "warn" : "");
+    mode.textContent = st.mode + " · " + (st.symbol || "") + " " + ((st.settings || {}).timeframe || "");
+  }
+  $("upd").textContent = "refreshed " + new Date().toLocaleTimeString();
+
+  const ps = s.paper.stats || { trades: 0 };
+  $("kpis").innerHTML =
+    kpi("Paper P&L", ps.trades ? money(ps.net) : "–", ps.trades ? cls(ps.net) : "") +
+    kpi("Closed paper trades", ps.trades || 0) +
+    kpi("Win rate", ps.trades ? ps.win_rate + "%" : "–") +
+    kpi("Profit factor", ps.profit_factor ?? "–") +
+    kpi("Max drawdown", ps.trades ? money(-ps.max_dd_usd) + (ps.max_dd_pct != null ? ` (${ps.max_dd_pct}%)` : "") : "–", ps.trades ? "neg" : "") +
+    kpi("Signals so far", `${s.counts.signals} <span class="muted" style="font-size:13px">of ${s.counts.candles} candles</span>`) +
+    (st && st.balance != null ? kpi("Demo balance / equity", `${Math.round(st.balance).toLocaleString()} / ${Math.round(st.equity).toLocaleString()}`) : "");
+
+  // committee board
+  const d = s.decisions.find(x => x.type === "candle");
+  if (!d) { $("board").innerHTML = '<div class="empty">No candle analysed yet. The first decision appears after the next hourly candle closes.</div>'; }
+  else {
+    const chips = Object.entries(d.votes || {}).map(([n, v]) => {
+      const t = v === 1 ? "BUY" : v === -1 ? "SELL" : "NEUTRAL";
+      return `<div class="chip ${t}"><span>${esc(short(n))}</span><b>${t}</b></div>`;
+    }).join("");
+    $("board").innerHTML =
+      `<div class="tally"><span class="big ${d.action}-t">${esc(d.action)}</span>
+        <span>BUY <b>${d.buy}</b> · SELL <b>${d.sell}</b> · neutral <b>${d.neutral}</b> · need <b>${d.need}</b></span></div>
+       <div class="muted" style="margin-top:4px">candle ${esc(d.bar)} (broker time)</div>
+       <div class="chips">${chips}</div>
+       <div><b>Outcome:</b> ${esc(d.status)}</div>`;
+  }
+
+  // equity curve
+  const cv = (ps.curve || []);
+  $("curve").innerHTML = cv.length < 1 ? '<div class="empty">No closed paper trades yet.</div>' : curveSvg(cv);
+
+  // open position
+  const o = s.paper.open;
+  $("open").innerHTML = o
+    ? `<table><tr><td class="muted">Side</td><td><b class="${o.dir}-t">${esc(o.dir)}</b> ${o.lots} lots</td></tr>
+       <tr><td class="muted">Entry</td><td>${o.entry}</td></tr><tr><td class="muted">Stop / target</td><td>${o.sl} / ${o.tp}</td></tr>
+       <tr><td class="muted">Risk</td><td>${money(o.risk_usd)} (${o.risk_pct}% of equity)</td></tr>
+       <tr><td class="muted">Opened after candle</td><td>${esc(o.opened_bar)}</td></tr></table>`
+    : '<div class="empty">No open paper position.</div>';
+  $("news").textContent = s.news || "No briefing file yet (the daily news task writes logs/news_YYYY-MM-DD.txt).";
+
+  // settings
+  const set = (st && st.settings) || {};
+  $("settings").innerHTML = st ? `<table>${Object.entries(set).map(([k, v]) => `<tr><td class="muted">${esc(k)}</td><td>${v === null || v === "" ? "<span class=muted>auto (risk-based)</span>" : esc(v)}</td></tr>`).join("")}
+    <tr><td class="muted">Broker clock</td><td>${st.server_offset_h == null ? "unknown (market closed?)" : "UTC" + (st.server_offset_h >= 0 ? "+" : "") + st.server_offset_h}</td></tr>
+    <tr><td class="muted">Last status</td><td>${esc(st.last_status)}</td></tr></table>` : '<div class="empty">–</div>';
+
+  // trades
+  const tr = s.paper.trades;
+  $("trades").innerHTML = tr.length ? `<table><thead><tr><th>Closed (candle)</th><th>Side</th><th class="num">Lots</th><th class="num">Entry</th><th class="num">Exit</th><th>Result</th><th class="num">P&amp;L</th></tr></thead><tbody>` +
+    tr.map(t => `<tr><td>${esc(t.closed_bar)}</td><td class="${t.dir}-t"><b>${esc(t.dir)}</b></td><td class="num">${t.lots}</td><td class="num">${t.entry}</td><td class="num">${t.exit}</td><td>${esc(t.reason)}</td><td class="num ${cls(t.pnl)}">${money(t.pnl)}</td></tr>`).join("") + "</tbody></table>"
+    : '<div class="empty">No closed paper trades yet.</div>';
+
+  // decisions
+  $("decisions").innerHTML = s.decisions.length ? `<table><thead><tr><th>Candle</th><th>Decision</th><th class="num">Buy</th><th class="num">Sell</th><th>Outcome</th></tr></thead><tbody>` +
+    s.decisions.slice(0, 24).map(x => x.type === "skip"
+      ? `<tr><td>${esc(x.bar)}</td><td class="muted">skipped</td><td></td><td></td><td>${esc(x.status)}</td></tr>`
+      : `<tr><td>${esc(x.bar)}</td><td class="${x.action}-t"><b>${esc(x.action)}</b></td><td class="num">${x.buy}</td><td class="num">${x.sell}</td><td>${esc(x.status)}</td></tr>`).join("") + "</tbody></table>"
+    : '<div class="empty">Nothing yet.</div>';
+}
+
+function curveSvg(c) {
+  const W = 520, H = 190, L = 48, R = 10, T = 10, B = 22;
+  const ys = c.map(p => p.cum).concat([0]);
+  let lo = Math.min(...ys), hi = Math.max(...ys); if (hi === lo) { hi += 1; lo -= 1; }
+  const x = i => L + (c.length === 1 ? (W - L - R) / 2 : i * (W - L - R) / (c.length - 1));
+  const y = v => T + (hi - v) * (H - T - B) / (hi - lo);
+  const pts = c.map((p, i) => `${x(i).toFixed(1)},${y(p.cum).toFixed(1)}`).join(" ");
+  const last = c[c.length - 1].cum;
+  const col = last >= 0 ? "var(--buy)" : "var(--sell)";
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Cumulative paper profit and loss, now ${money(last)}">
+    <line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--line)" stroke-dasharray="4 3"/>
+    <text x="${L - 6}" y="${y(hi) + 4}" text-anchor="end">${Math.round(hi)}</text>
+    <text x="${L - 6}" y="${y(lo) + 4}" text-anchor="end">${Math.round(lo)}</text>
+    <text x="${L - 6}" y="${y(0) + 4}" text-anchor="end">0</text>
+    <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="${x(c.length - 1)}" cy="${y(last)}" r="3.5" fill="${col}"/>
+    <text x="${W - R}" y="${H - 6}" text-anchor="end">${c.length} trades · now ${money(last)}</text></svg>`;
+}
+
+async function tick() {
+  try {
+    const r = await fetch("api/state" + (token ? "?token=" + encodeURIComponent(token) : ""), { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    render(await r.json());
+  } catch (e) {
+    const live = $("live"); live.className = "pill bad"; live.lastChild.textContent = "portal cannot read data (" + e.message + ")";
+  }
+}
+tick(); setInterval(tick, 15000);
+</script>
+</body>
+</html>

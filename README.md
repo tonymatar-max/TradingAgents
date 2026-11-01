@@ -112,3 +112,10 @@ Start-ScheduledTask -TaskName XAUUSD-Bot
 powershell -ExecutionPolicy Bypass -File scripts\uninstall_tasks.ps1
 ```
 Logs go to `logs\bot.log` (rotates daily, 60 days), `logs\crash.log`, and `logs\news_YYYY-MM-DD.txt` (daily briefing, default 06:30). The PC must stay on, awake and logged in, with MT5 open. `python -m xauusd_agents newsbrief` prints the briefing on demand.
+
+## Portal (results page)
+```
+python -m xauusd_agents portal                       # http://127.0.0.1:8765 (this PC only)
+python -m xauusd_agents portal --host 0.0.0.0 --token MYSECRET   # reachable from phone on your Wi-Fi: http://PC-IP:8765/?token=MYSECRET
+```
+Shows bot status, latest committee votes, paper (dry-run) trades and equity curve, open paper position, recent decisions, running settings and the news briefing. The bot writes `logs/events.jsonl` and `logs/status.json`; the portal only reads them. In dry-run the bot keeps ONE paper position at a time and closes it when a later candle touches SL/TP (SL first if both).

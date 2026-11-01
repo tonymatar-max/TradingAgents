@@ -34,7 +34,7 @@ class Mt5Bot:
     def __init__(self, mt5, symbol="XAUUSD", timeframe="H1", committee=None, risk_pct=0.01,
                  sl_atr=1.5, tp_atr=3.0, max_daily_loss_pct=0.03, magic=26001, dry_run=True,
                  bars=500, deviation=30, news=None, htf_min=0, htf_tf="H4", htf_agents=None, fixed_lots=None, max_risk_pct=0.10,
-                 server_utc_offset_hours=None, clock=time.time):
+                 server_utc_offset_hours=None, clock=time.time, logdir=None, describe=None):
         self.mt5, self.symbol, self.dry_run = mt5, symbol, dry_run
         self.tf = getattr(mt5, f"TIMEFRAME_{timeframe}")
         self.committee = committee or Committee()
@@ -43,6 +43,13 @@ class Mt5Bot:
         self.last_bar, self.news = None, news
         self.htf_min, self.htf_tf, self.htf_agents = htf_min, htf_tf, htf_agents
         self.fixed_lots, self.max_risk_pct = fixed_lots, max_risk_pct
+        self.describe = describe or {}
+        self.events = self.paper = None
+        if logdir:
+            from .events import EventLog
+            self.events = EventLog(logdir)
+            self._logdir = logdir
+        self._fresh = None
         self.clock = clock                      # local UTC epoch seconds (injectable for tests)
         self.fixed_offset = server_utc_offset_hours is not None
         self.server_offset = None if server_utc_offset_hours is None else server_utc_offset_hours * 3600
@@ -59,6 +66,10 @@ class Mt5Bot:
         if not m.symbol_select(self.symbol, True) or m.symbol_info(self.symbol) is None:
             raise RuntimeError(f"Symbol {self.symbol!r} not found - check your broker's gold symbol name.")
         log.info("Connected to DEMO account %s, balance %.2f, dry_run=%s", acc.login, acc.balance, self.dry_run)
+        if self.events and self.dry_run:
+            from .events import PaperBook
+            self.paper = PaperBook(self._logdir, start_balance=acc.balance)
+        self._status("connected")
 
     def _learn_server_offset(self):
         """Broker (server) clock minus UTC. Only trusted from a FRESH tick: a live tick differs from our UTC clock
@@ -80,6 +91,8 @@ class Mt5Bot:
 
     # ---- risk --------------------------------------------------------------
     def has_position(self) -> bool:
+        if self.paper is not None and self.paper.open:
+            return True
         pos = self.mt5.positions_get(symbol=self.symbol) or []
         return any(p.magic == self.magic for p in pos)
 
@@ -92,7 +105,36 @@ class Mt5Bot:
         return pnl <= -self.max_daily_loss_pct * bal
 
     # ---- trading -----------------------------------------------------------
+    def _status(self, last_status):
+        if not self.events:
+            return
+        try:
+            acc = self.mt5.account_info()
+            self.events.write_status(
+                mode="DRY RUN" if self.dry_run else "LIVE ORDERS (demo)", symbol=self.symbol,
+                last_bar=str(self.last_bar), last_status=last_status, settings=self.describe,
+                server_offset_h=None if self.server_offset is None else self.server_offset / 3600,
+                balance=getattr(acc, "balance", None), equity=getattr(acc, "equity", None),
+                paper_open=self.paper.open if self.paper else None,
+                paper_start_balance=self.paper.state.get("start_balance") if self.paper else None)
+        except Exception:
+            log.exception("could not write status")
+
     def step(self) -> str:
+        """Run one decision cycle (records events for the portal). Returns a short status string."""
+        self._fresh = None
+        status = self._step()
+        if self.events and status != "waiting for new candle":
+            if self._fresh:
+                bar, d = self._fresh
+                self.events.append(type="candle", bar=str(bar), action=d.action, buy=d.buy, sell=d.sell,
+                                   neutral=d.neutral, need=d.required, votes=d.votes, status=status)
+            else:
+                self.events.append(type="skip", bar=str(self.last_bar), status=status)
+        self._status(status)
+        return status
+
+    def _step(self) -> str:
         """Run one decision cycle. Returns a short status string."""
         df = self.fetch()
         bar_time = df.index[-1]
@@ -109,7 +151,13 @@ class Mt5Bot:
         if age > 3 * bar_s:
             log.info("Latest closed candle %s is stale (market closed?) - not trading it", bar_time)
             return "stale candle - skipped"
+        if self.paper is not None:
+            for c in self.paper.update(df, self.mt5.symbol_info(self.symbol)):
+                self.events.append(type="paper_close", **c)
+                log.info("PAPER trade closed: %s %s %.2f -> %.2f (%s) pnl $%.2f", c["dir"], c["lots"], c["entry"],
+                         c["exit"], c["reason"], c["pnl"])
         d = self.committee.decide(df)
+        self._fresh = (bar_time, d)
         log.info("%s bar %s: %s (BUY %d / SELL %d / NEUTRAL %d, need %d)",
                  self.symbol, bar_time, d.action, d.buy, d.sell, d.neutral, d.required)
         if d.action == "HOLD":
@@ -162,8 +210,13 @@ class Mt5Bot:
             return f"{action} skipped: risk {risk_pct:.1%} of equity exceeds the {self.max_risk_pct:.0%} cap"
         msg = (f"{action} {lots} {self.symbol} @ {price} SL {sl} TP {tp}  "
                f"[risk ${risk_money:.0f} = {risk_pct:.1%} of equity]")
+        sig = {"dir": action, "lots": lots, "entry": price, "sl": sl, "tp": tp, "risk_usd": round(risk_money, 2),
+               "risk_pct": round(100 * risk_pct, 2), "opened_bar": str(self.last_bar)}
         if self.dry_run:
             log.info("DRY-RUN would place: %s", msg)
+            if self.paper is not None:
+                self.paper.open_position(sig, str(self.last_bar))
+                self.events.append(type="signal", mode="dry", **sig)
             return "DRY-RUN " + msg
         fill = info.filling_mode
         filling = m.ORDER_FILLING_FOK if fill & 1 else m.ORDER_FILLING_IOC if fill & 2 else m.ORDER_FILLING_RETURN
@@ -177,6 +230,8 @@ class Mt5Bot:
             log.error("Order failed: %s", res)
             return f"ORDER FAILED {res}"
         log.info("Order placed: %s", msg)
+        if self.events:
+            self.events.append(type="signal", mode="live", **sig)
         return "PLACED " + msg
 
     def run(self, poll_seconds=15):

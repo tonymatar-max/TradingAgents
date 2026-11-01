@@ -12,7 +12,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -47,6 +47,10 @@ def main():
     p.add_argument("--list-trades", action="store_true", help="backtest: print every trade (to compare with the bot log)")
     p.add_argument("--server-utc-offset", type=float, default=None, help="mt5: broker server clock minus UTC in hours (e.g. 2 or 3). Auto-detected when the market is open")
     p.add_argument("--log-file", help="mt5: also write the log to this file (rotates daily, keeps 60 days)")
+    p.add_argument("--logdir", default="logs", help="mt5/portal: folder for events.jsonl, status.json, logs")
+    p.add_argument("--port", type=int, default=8765, help="portal port")
+    p.add_argument("--host", default="127.0.0.1", help="portal host (use 0.0.0.0 to open it to your network, with --token)")
+    p.add_argument("--token", default=None, help="portal: require ?token=... (recommended with --host 0.0.0.0)")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
@@ -96,6 +100,11 @@ def main():
             print("Cannot tell: the last tick is old, so the market looks closed. Run this again while gold is trading.")
         return
 
+    if a.cmd == "portal":
+        from .portal import serve
+        serve(a.logdir, a.host, a.port, a.token)
+        return
+
     if a.cmd == "newsbrief":
         from .news import NewsFilter, brief
         text = brief(NewsFilter(a.news_before, a.news_after))
@@ -142,7 +151,10 @@ def main():
         news = NewsFilter(a.news_before, a.news_after) if a.news else None
         Mt5Bot(mt5, a.symbol, a.timeframe, make_com(), news=news, risk_pct=a.risk,
                sl_atr=a.sl_atr, tp_atr=a.tp_atr, magic=a.magic,
-               htf_min=a.htf_min, htf_tf=a.htf_tf, server_utc_offset_hours=a.server_utc_offset, fixed_lots=a.lots, max_risk_pct=0.10 if a.max_risk is None else a.max_risk, dry_run=not a.live_orders).run()
+               htf_min=a.htf_min, htf_tf=a.htf_tf, server_utc_offset_hours=a.server_utc_offset, logdir=a.logdir,
+               describe={"timeframe": a.timeframe, "threshold": a.threshold, "sl_atr": a.sl_atr, "tp_atr": a.tp_atr,
+                         "htf_min": a.htf_min, "news": bool(a.news), "lots": a.lots, "risk": a.risk, "magic": a.magic},
+               fixed_lots=a.lots, max_risk_pct=0.10 if a.max_risk is None else a.max_risk, dry_run=not a.live_orders).run()
         return
 
     df = synthetic_xauusd() if a.cmd == "demo" else load_csv(a.csv)

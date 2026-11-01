@@ -1,6 +1,7 @@
 # Registers Windows scheduled tasks (run in a normal PowerShell window; no admin needed):
 #   XAUUSD-Bot       starts the bot at logon (restarts if it exits)
 #   XAUUSD-NewsBrief writes the daily news briefing
+#   XAUUSD-Portal    serves the results page at http://127.0.0.1:8765
 #   XAUUSD-MT5       (optional) starts the MT5 terminal at logon if you pass -Mt5Path
 # Dry run by default. Pass -LiveOrders only when you want the demo account to trade.
 param(
@@ -28,6 +29,12 @@ $newsArg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Repo
 Register-ScheduledTask -TaskName "XAUUSD-NewsBrief" -Principal $principal -Settings $settings `
     -Trigger (New-ScheduledTaskTrigger -Daily -At $NewsTime) `
     -Action (New-ScheduledTaskAction -Execute "powershell.exe" -Argument $newsArg -WorkingDirectory $Repo) -Force | Out-Null
+
+# 2b) the portal (read-only web page on this PC only: http://127.0.0.1:8765)
+Register-ScheduledTask -TaskName "XAUUSD-Portal" -Principal $principal -Settings $settings `
+    -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $user) `
+    -Action (New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $Repo `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command `"python -m xauusd_agents portal --logdir logs`"") -Force | Out-Null
 
 # 3) optional: start MT5 at logon
 if ($Mt5Path -ne "") {
