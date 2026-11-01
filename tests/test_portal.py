@@ -215,3 +215,22 @@ class Votes(unittest.TestCase):
         self.assertEqual(m.sent, [])
         ls.reset(d, "test"); b.last_bar = None
         self.assertTrue(b.step().startswith("PLACED BUY")); self.assertEqual(b.committee.required, 8)
+
+
+class AtrEdits(unittest.TestCase):
+    def test_validate_atr(self):
+        from xauusd_agents import live_settings as ls
+        self.assertEqual(ls.validate({"sl_atr": 2.0, "tp_atr": 3.0})[0], {"sl_atr": 2.0, "tp_atr": 3.0})
+        for bad in ({"sl_atr": 0.5}, {"sl_atr": 3.5}, {"tp_atr": 0.9}, {"tp_atr": 5}, {"sl_atr": "2"}, {"sl_atr": True}):
+            self.assertTrue(ls.validate(bad)[1], bad)
+
+    def test_bot_uses_new_stop_and_target_for_new_trades(self):
+        from xauusd_agents import live_settings as ls
+        d = tempfile.mkdtemp()
+        m = FakeMT5(); b = bot(m, dry=False); b.events = EventLog(d); b._logdir = d; b.connect()
+        ls.write(d, {"sl_atr": 3.0, "tp_atr": 1.0, "lots": 0.1, "max_risk": 0.0}, "test")
+        self.assertTrue(b.step().startswith("PLACED"))
+        r = m.sent[0]; stop, tgt = abs(r["price"] - r["sl"]), abs(r["tp"] - r["price"])
+        self.assertAlmostEqual(stop / tgt, 3.0, delta=0.15)           # 3x ATR stop vs 1x ATR target
+        st = json.load(open(os.path.join(d, "status.json")))["settings"]
+        self.assertEqual((st["sl_atr"], st["tp_atr"]), (3.0, 1.0))

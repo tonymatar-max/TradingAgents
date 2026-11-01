@@ -1,6 +1,7 @@
 """Settings the portal may change while the bot runs. ONE place defines what is allowed and the hard limits.
 
-Deliberately NOT editable from the web: dry-run/live switch, symbol, stop/target and the H4 filter.
+Deliberately NOT editable from the web: dry-run/live switch, symbol and the H4 filter.
+`sl_atr` / `tp_atr` = stop and target distance in ATR multiples (tested: stop 1.5-2.0, target 2.0-4.0).
 `votes` = how many of the agents must agree (7-10; 8 is the default, 9 and 10 are stricter). Those were validated together by backtests; change them on the command line.
 """
 from __future__ import annotations
@@ -11,8 +12,9 @@ import os
 
 FILE = "settings.json"
 AUDIT = "settings_audit.jsonl"
-ALLOWED = ("lots", "risk", "max_risk", "paused", "votes")
-LIMITS = {"lots": (0.01, 1.0), "risk": (0.001, 0.03), "max_risk": (0.0, 0.25), "votes": (7, 10)}
+ALLOWED = ("lots", "risk", "max_risk", "paused", "votes", "sl_atr", "tp_atr")
+LIMITS = {"lots": (0.01, 1.0), "risk": (0.001, 0.03), "max_risk": (0.0, 0.25), "votes": (7, 10),
+          "sl_atr": (1.0, 3.0), "tp_atr": (1.0, 4.0)}
 
 
 def _num(v, name):

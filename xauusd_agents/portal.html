@@ -132,6 +132,13 @@
         <span class="hint">8 is the tested default; 9–10 trade less often but only on near-unanimous signals</span>
       </div>
       <div class="row">
+        <label for="slatr">Stop distance</label>
+        <input type="number" id="slatr" min="1" max="3" step="0.1"> <span>× ATR</span>
+        <label for="tpatr" style="min-width:0">Target distance</label>
+        <input type="number" id="tpatr" min="1" max="4" step="0.1"> <span>× ATR</span>
+        <span class="hint">tested: stop 1.5–2.0, target 2.0–4.0. New trades only; open ones keep theirs.</span>
+      </div>
+      <div class="row">
         <label for="risk">Risk per trade (auto)</label>
         <input type="number" id="risk" min="0.1" max="3" step="0.1"> <span>% of equity</span>
         <span class="hint">0.1 – 3 %</span>
@@ -154,7 +161,7 @@
       </div>
       <div id="msg" class="msg" role="status" aria-live="polite"></div>
       <div id="applied" class="hint" aria-live="polite"></div>
-      <div class="hint">Not editable here, on purpose: switching to live orders, the symbol, the stop and target sizes and the H4 filter. They were tested together, so change them on the command line. The bot applies saves within ~15 seconds and logs every change.</div>
+      <div class="hint">Not editable here, on purpose: switching to live orders, the symbol, the H4 filter. They were tested together, so change them on the command line. The bot applies saves within ~15 seconds and logs every change.</div>
       <div class="scroll" id="audit"></div>
     </div>
   </section>
@@ -291,14 +298,14 @@ function curveSvg(c) {
 let dirty = false, last = null;
 const qs = token ? "?token=" + encodeURIComponent(token) : "";
 try { $("pwd").value = sessionStorage.getItem("editpwd") || ""; } catch (e) {}
-["mode-auto", "mode-fixed", "lots", "risk", "maxrisk", "paused", "votes"].forEach(id => $(id).addEventListener("input", () => { dirty = true; updatePreview(); }));
+["mode-auto", "mode-fixed", "lots", "risk", "maxrisk", "paused", "votes", "slatr", "tpatr"].forEach(id => $(id).addEventListener("input", () => { dirty = true; updatePreview(); }));
 
 function fillForm(s) {
   const run = (s.status && s.status.settings) || {};
   const f = (s.editing || {}).file;
   // show what is SAVED (so the form does not snap back before the bot has applied it); fall back to what is running
-  const set = f ? { ...run, lots: f.lots !== undefined ? f.lots : run.lots, risk: f.risk ?? run.risk, max_risk: f.max_risk ?? run.max_risk, paused: f.paused ?? run.paused, votes: f.votes ?? run.votes } : run;
-  const same = !f || (["lots", "risk", "max_risk", "paused", "votes"].every(k => f[k] === undefined || f[k] === run[k]));
+  const set = f ? { ...run, lots: f.lots !== undefined ? f.lots : run.lots, risk: f.risk ?? run.risk, max_risk: f.max_risk ?? run.max_risk, paused: f.paused ?? run.paused, votes: f.votes ?? run.votes, sl_atr: f.sl_atr ?? run.sl_atr, tp_atr: f.tp_atr ?? run.tp_atr } : run;
+  const same = !f || (["lots", "risk", "max_risk", "paused", "votes", "sl_atr", "tp_atr"].every(k => f[k] === undefined || f[k] === run[k]));
   $("applied").textContent = !f ? "Running with the startup settings." :
     same ? "Saved settings are in effect (the bot is running with them)." :
     "Saved, but the bot has not applied them yet. It checks every ~15 seconds. If this stays, the bot is not running.";
@@ -310,6 +317,8 @@ function fillForm(s) {
   $("maxrisk").value = set.max_risk != null ? Math.round(set.max_risk * 100) : 10;
   $("paused").checked = !!set.paused;
   if (set.votes) $("votes").value = String(set.votes);
+  if (set.sl_atr) $("slatr").value = set.sl_atr;
+  if (set.tp_atr) $("tpatr").value = set.tp_atr;
   $("nagents").textContent = (s.status && s.status.settings && s.status.settings.agents) || 10;
   updatePreview();
 }
@@ -321,11 +330,13 @@ function updatePreview() {
   const ref = (s.paper.open) || (s.signals[0]);
   const eq = s.status.equity, per = s.status.usd_per_dollar_per_lot || 100;
   if (!ref || !eq) { el.textContent = "A risk preview appears after the first signal."; el.className = "preview"; return; }
-  const dist = Math.abs(ref.entry - ref.sl);
+  const runSl = (s.status.settings || {}).sl_atr || +$("slatr").value || 1;
+  const newSl = +$("slatr").value || runSl;
+  const dist = Math.abs(ref.entry - ref.sl) * newSl / runSl;   // stop = sl_atr × ATR, so it scales with the stop multiple
   let text, bad = false;
   if (fixed) {
     const lots = +$("lots").value || 0, usd = lots * per * dist, pct = 100 * usd / eq, cap = +$("maxrisk").value;
-    text = `At the last signal's stop ($${dist.toFixed(2)} away), ${lots.toFixed(2)} lots would risk about ${money(usd)} = ${pct.toFixed(1)}% of equity.`;
+    text = `At a stop of ${newSl}× ATR (about $${dist.toFixed(2)} away at the last signal's volatility), ${lots.toFixed(2)} lots would risk about ${money(usd)} = ${pct.toFixed(1)}% of equity.`;
     if (cap > 0 && pct > cap) { text += ` That is above your ${cap}% cap, so a trade like it would be SKIPPED.`; bad = true; }
     else if (pct > 5) { text += " That is a large risk per trade."; bad = true; }
   } else {
@@ -345,7 +356,7 @@ async function post(path, body) {
 }
 $("save").onclick = async () => {
   const fixed = $("mode-fixed").checked;
-  const body = { lots: fixed ? +$("lots").value : null, risk: (+$("risk").value) / 100, max_risk: (+$("maxrisk").value) / 100, paused: $("paused").checked, votes: +$("votes").value };
+  const body = { lots: fixed ? +$("lots").value : null, risk: (+$("risk").value) / 100, max_risk: (+$("maxrisk").value) / 100, paused: $("paused").checked, votes: +$("votes").value, sl_atr: +$("slatr").value, tp_atr: +$("tpatr").value };
   const pv = $("preview");
   if (pv.classList.contains("warn") && !confirm("The preview shows a warning:\n\n" + pv.textContent + "\n\nSave anyway?")) return;
   try { const j = await post("", body); dirty = false; say("Saved. " + j.note, true); tick(); }
