@@ -87,3 +87,24 @@ class NewsFilter:
         self.refresh(force=True)
         now = self.clock()
         return [e for e in self.events if e["time"] >= now - self.after][:n]
+
+
+def brief(nf: "NewsFilter", hours: int = 36) -> str:
+    """Human-readable daily briefing of upcoming high-impact USD events."""
+    nf.refresh(force=True)
+    now = nf.clock()
+    head = f"News brief {now:%Y-%m-%d %H:%M} UTC - high-impact USD events, next {hours}h"
+    if nf.loaded_at is None:
+        return head + "\nNEWS DATA UNAVAILABLE - the bot will not open trades until it loads (fails closed)."
+    lim = now + timedelta(hours=hours)
+    ev = [e for e in nf.events if now - nf.after <= e["time"] <= lim]
+    lines = [head, f"Bot blackout: {int(nf.before.total_seconds() // 60)} min before / "
+                   f"{int(nf.after.total_seconds() // 60)} min after each event (no NEW trades).", ""]
+    if not ev:
+        lines.append("No high-impact USD events in this window.")
+    for e in ev:
+        t = e["time"]
+        lines.append(f"  {t:%a %d %b %H:%M} UTC  (your PC time {t.astimezone():%H:%M})  {e['title']}")
+    blocked, why = nf.blocked()
+    lines += ["", f"Trading blocked right now: {'YES - ' + why if blocked else 'no'}"]
+    return "\n".join(lines)

@@ -12,7 +12,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -46,6 +46,7 @@ def main():
     p.add_argument("--max-risk", type=float, default=None, help="with --lots: skip trades whose stop would risk more than this fraction of equity, e.g. 0.10 (mt5 default 0.10; backtest default off; 0 = no cap)")
     p.add_argument("--list-trades", action="store_true", help="backtest: print every trade (to compare with the bot log)")
     p.add_argument("--server-utc-offset", type=float, default=None, help="mt5: broker server clock minus UTC in hours (e.g. 2 or 3). Auto-detected when the market is open")
+    p.add_argument("--log-file", help="mt5: also write the log to this file (rotates daily, keeps 60 days)")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
@@ -95,6 +96,15 @@ def main():
             print("Cannot tell: the last tick is old, so the market looks closed. Run this again while gold is trading.")
         return
 
+    if a.cmd == "newsbrief":
+        from .news import NewsFilter, brief
+        text = brief(NewsFilter(a.news_before, a.news_after))
+        print(text)
+        if a.out and a.out != "xauusd.csv":
+            with open(a.out, "w", encoding="utf-8") as f:
+                f.write(text + "\n")
+        return
+
     if a.cmd == "news":
         from .news import NewsFilter
         nf = NewsFilter(a.news_before, a.news_after)
@@ -120,7 +130,14 @@ def main():
         except ImportError:
             raise SystemExit("Install with: pip install MetaTrader5   (Windows only, MT5 terminal must be open)")
         from .mt5_bot import Mt5Bot
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+        import sys
+        from logging.handlers import TimedRotatingFileHandler
+        handlers = [logging.StreamHandler(sys.stdout)]
+        if a.log_file:
+            import os
+            os.makedirs(os.path.dirname(os.path.abspath(a.log_file)), exist_ok=True)
+            handlers.append(TimedRotatingFileHandler(a.log_file, when="midnight", backupCount=60, encoding="utf-8"))
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", handlers=handlers)
         from .news import NewsFilter
         news = NewsFilter(a.news_before, a.news_after) if a.news else None
         Mt5Bot(mt5, a.symbol, a.timeframe, make_com(), news=news, risk_pct=a.risk,

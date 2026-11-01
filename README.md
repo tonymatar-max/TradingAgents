@@ -102,3 +102,13 @@ Chooses threshold/stop/target on the earlier period and checks them on the later
 
 ## Broker clock / stale-candle guard
 The bot compares the last closed candle with your PC clock, converted to broker time. The offset is learned from a fresh tick while the market is open (or fixed with `--server-utc-offset 3`). If the market is closed and no offset is known, it does not trade. Check yours with `python -m xauusd_agents servertime` while gold is trading.
+
+## Run as a background task (Windows)
+```
+powershell -ExecutionPolicy Bypass -File scripts\install_tasks.ps1                 # dry run, starts at logon
+powershell -ExecutionPolicy Bypass -File scripts\install_tasks.ps1 -Mt5Path "C:\Program Files\MetaTrader 5\terminal64.exe"
+powershell -ExecutionPolicy Bypass -File scripts\install_tasks.ps1 -LiveOrders     # demo orders ON (deliberate choice)
+Start-ScheduledTask -TaskName XAUUSD-Bot
+powershell -ExecutionPolicy Bypass -File scripts\uninstall_tasks.ps1
+```
+Logs go to `logs\bot.log` (rotates daily, 60 days), `logs\crash.log`, and `logs\news_YYYY-MM-DD.txt` (daily briefing, default 06:30). The PC must stay on, awake and logged in, with MT5 open. `python -m xauusd_agents newsbrief` prints the briefing on demand.

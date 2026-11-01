@@ -97,3 +97,18 @@ class TfScan(unittest.TestCase):
         r = scan_frames({"H1": df, "H4": h4}, "2024-03-01", "2024-05-01")
         self.assertEqual(list(r.tf), ["H1", "H4"])
         self.assertIn("test_pf", r.columns)
+
+
+class Brief(unittest.TestCase):
+    def test_brief_lists_events_and_blackout(self):
+        import os, tempfile
+        from xauusd_agents.news import brief
+        n = News().nf()
+        n.cache_path = os.path.join(tempfile.mkdtemp(), "c.json")
+        txt = brief(n, hours=24)
+        self.assertIn("FOMC", txt); self.assertIn("blocked right now: YES", txt)
+        self.assertNotIn("Low thing", txt)
+
+    def test_brief_when_feed_down(self):
+        from xauusd_agents.news import brief
+        self.assertIn("UNAVAILABLE", brief(News().nf(fetch_fail=True)))
