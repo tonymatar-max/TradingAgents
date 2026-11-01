@@ -154,6 +154,13 @@ def main():
         print("\nBy direction:")
         print(t.assign(side=t["dir"].map({1: "LONG", -1: "SHORT"})).groupby("side").pnl
               .agg(trades="count", net="sum", avg="mean").round(2).to_string())
+        w = t.nsmallest(3, "pnl")
+        print("\nThree worst trades (check these candles on your MT5 chart for bad data):")
+        for _, r in w.iterrows():
+            print(f"  {df.index[int(r.entry_i)]}  {'LONG' if r['dir'] == 1 else 'SHORT'}  lots {r.lots}  entry {r.entry:.2f}  "
+                  f"stop distance {abs(r.entry - r.sl):.2f}  exit {r['exit']:.2f} ({r.reason})  pnl {r.pnl:.2f}")
+        typ = (t.entry - t.sl).abs().median()
+        print(f"  typical (median) stop distance: {typ:.2f}")
         d = df[df.index >= pd.Timestamp(a.start)] if a.start else df
         print(f"\nBuy&hold gold same period: {100 * (d.close.iloc[-1] / d.open.iloc[0] - 1):.1f}%  "
               f"({d.open.iloc[0]:.2f} -> {d.close.iloc[-1]:.2f})")
