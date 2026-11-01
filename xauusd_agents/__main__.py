@@ -12,7 +12,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -27,7 +27,29 @@ def main():
     p.add_argument("--split", help="optimize: first date of the TEST period, e.g. 2026-07-01")
     p.add_argument("--sl-atr", type=float, default=1.5, help="stop distance in ATR multiples")
     p.add_argument("--tp-atr", type=float, default=3.0, help="target distance in ATR multiples")
+    p.add_argument("--agents", type=int, choices=[10, 12], default=10, help="10 = validated set; 12 adds Inside Bar + Initial Balance")
+    p.add_argument("--ib-bars", type=int, default=2, help="Initial Balance length in bars (H1: 2 = first 2 hours)")
+    p.add_argument("--ib-start-hour", type=int, default=0, help="session open hour in your broker's server clock")
+    p.add_argument("--news", action="store_true", help="mt5: block new trades around high-impact USD news")
+    p.add_argument("--news-before", type=int, default=30, help="minutes before an event")
+    p.add_argument("--news-after", type=int, default=30, help="minutes after an event")
     a = p.parse_args()
+
+    from .agents import default_agents, extended_agents
+    agents = extended_agents(a.ib_bars, a.ib_start_hour) if a.agents == 12 else default_agents()
+    make_com = lambda: Committee(agents, threshold=a.threshold)
+
+    if a.cmd == "news":
+        from .news import NewsFilter
+        nf = NewsFilter(a.news_before, a.news_after)
+        ev = nf.upcoming(10)
+        if nf.loaded_at is None:
+            raise SystemExit(f"Could not load the calendar: {getattr(nf, 'last_error', '?')}")
+        print(f"{len(nf.events)} high-impact USD events this week. Next ones (UTC):")
+        for e in ev:
+            print(f"  {e['time']:%a %Y-%m-%d %H:%M}  {e['title']}")
+        print("Blocked right now:", nf.blocked())
+        return
 
     if a.cmd == "export":
         from .mt5_export import export_csv
@@ -43,7 +65,9 @@ def main():
             raise SystemExit("Install with: pip install MetaTrader5   (Windows only, MT5 terminal must be open)")
         from .mt5_bot import Mt5Bot
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-        Mt5Bot(mt5, a.symbol, a.timeframe, Committee(threshold=a.threshold), risk_pct=a.risk,
+        from .news import NewsFilter
+        news = NewsFilter(a.news_before, a.news_after) if a.news else None
+        Mt5Bot(mt5, a.symbol, a.timeframe, make_com(), news=news, risk_pct=a.risk,
                sl_atr=a.sl_atr, tp_atr=a.tp_atr, dry_run=not a.live_orders).run()
         return
 
@@ -52,7 +76,7 @@ def main():
         df = df[: pd.Timestamp(a.end) + pd.Timedelta(days=1)]
     if a.cmd == "demo":
         print("NOTE: demo uses SYNTHETIC data, not real gold prices.\n")
-    com = Committee(threshold=a.threshold)
+    com = make_com()
 
     if a.cmd == "optimize":
         from .optimize import sweep

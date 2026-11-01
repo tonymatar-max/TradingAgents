@@ -33,13 +33,13 @@ def lot_size(equity, risk_pct, stop_dist, info) -> float:
 class Mt5Bot:
     def __init__(self, mt5, symbol="XAUUSD", timeframe="H1", committee=None, risk_pct=0.01,
                  sl_atr=1.5, tp_atr=3.0, max_daily_loss_pct=0.03, magic=26001, dry_run=True,
-                 bars=500, deviation=30):
+                 bars=500, deviation=30, news=None):
         self.mt5, self.symbol, self.dry_run = mt5, symbol, dry_run
         self.tf = getattr(mt5, f"TIMEFRAME_{timeframe}")
         self.committee = committee or Committee()
         self.risk_pct, self.sl_atr, self.tp_atr = risk_pct, sl_atr, tp_atr
         self.max_daily_loss_pct, self.magic, self.bars, self.deviation = max_daily_loss_pct, magic, bars, deviation
-        self.last_bar = None
+        self.last_bar, self.news = None, news
 
     # ---- setup -------------------------------------------------------------
     def connect(self):
@@ -98,6 +98,10 @@ class Mt5Bot:
             return "HOLD"
         if self.has_position():
             return f"{d.action} signal ignored: position already open"
+        if self.news is not None:
+            blocked, why = self.news.blocked()
+            if blocked:
+                return f"{d.action} signal ignored: {why}"
         if self.daily_loss_hit():
             return f"{d.action} signal ignored: daily loss limit reached"
         return self.place(d.action, ind.atr(df).iloc[-1])
@@ -137,7 +141,9 @@ class Mt5Bot:
         try:
             while True:
                 try:
-                    self.step()
+                    status = self.step()
+                    if status != "waiting for new candle":
+                        log.info("status: %s", status)
                 except Exception:
                     log.exception("cycle error (will retry)")
                 time.sleep(poll_seconds)

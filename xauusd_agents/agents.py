@@ -125,6 +125,58 @@ class RegressionChannel(Agent):
         return _vote((slope > 0) & (r2 > 0.5), (slope < 0) & (r2 > 0.5))
 
 
+class InsideBarBreakout(Agent):
+    """Inside bar (bar i-1 fully inside bar i-2) followed by a close beyond the mother bar,
+    in the direction of EMA50. The state lasts `hold` bars or until price crosses EMA50 against it."""
+    name, style = "11_Inside_Bar", "pattern: inside-bar breakout with EMA50 trend filter"
+
+    def __init__(self, hold: int = 12):
+        self.hold = hold
+
+    def votes(self, df):
+        h, l, c = (df[k].to_numpy() for k in ("high", "low", "close"))
+        e50 = ind.ema(df["close"], 50).to_numpy()
+        n, st, age = len(df), np.zeros(len(df), dtype=int), 0
+        for i in range(2, n):
+            prev = st[i - 1]
+            age += 1
+            inside = h[i - 1] <= h[i - 2] and l[i - 1] >= l[i - 2]
+            if inside and c[i] > h[i - 2] and c[i] > e50[i]:
+                st[i], age = 1, 0
+            elif inside and c[i] < l[i - 2] and c[i] < e50[i]:
+                st[i], age = -1, 0
+            elif prev == 1 and age <= self.hold and c[i] > e50[i]:
+                st[i] = 1
+            elif prev == -1 and age <= self.hold and c[i] < e50[i]:
+                st[i] = -1
+        return pd.Series(st, index=df.index)
+
+
+class InitialBalanceBreakout(Agent):
+    """Initial Balance = high/low of the first `ib_bars` bars of each session (session starts at
+    `start_hour` in the data's clock; for broker server time use your London/NY open hour).
+    Votes +1 above the IB, -1 below, 0 inside it or while the IB is still forming."""
+    name, style = "12_Initial_Balance", "session: break of first-hours range"
+
+    def __init__(self, ib_bars: int = 2, start_hour: int = 0):
+        self.ib_bars, self.start_hour = ib_bars, start_hour
+
+    def votes(self, df):
+        sess = (df.index - pd.Timedelta(hours=self.start_hour)).normalize()
+        g = pd.Series(sess, index=df.index)
+        n_in = df.groupby(g.values).cumcount()
+        first = n_in < self.ib_bars
+        ib_hi = df["high"].where(first).groupby(g.values).transform("max")
+        ib_lo = df["low"].where(first).groupby(g.values).transform("min")
+        formed = n_in >= self.ib_bars   # IB only used after its last bar has closed
+        c = df["close"]
+        return _vote(formed & (c > ib_hi), formed & (c < ib_lo))
+
+
+def extended_agents(ib_bars: int = 2, ib_start_hour: int = 0) -> list[Agent]:
+    return default_agents() + [InsideBarBreakout(), InitialBalanceBreakout(ib_bars, ib_start_hour)]
+
+
 def default_agents() -> list[Agent]:
     return [EmaTrend(), MacdMomentum(), RsiMomentumRegime(), BollingerPosition(),
             DonchianBreakout(), StochasticBias(), AdxDirectional(), SupertrendAgent(),

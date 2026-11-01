@@ -53,3 +53,15 @@ Earlier candles are loaded only to warm up the indicators; trades start at `--fr
 python -m xauusd_agents optimize --csv xauusd_h1.csv --from 2026-01-01 --split 2026-07-01 --spread 0.30
 ```
 Tests consensus threshold, stop and target sizes on the train period (from -> split) and on the unseen test period (split -> end). Adopt only settings that are good in both and have similar neighbours.
+
+## 12 agents + news blackout
+```
+# compare the validated 10-agent set with 12 (adds Inside Bar + Initial Balance); backtest first!
+python -m xauusd_agents backtest --csv xauusd_h1.csv --from 2026-01-01 --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --agents 12 --report
+# Initial Balance uses your broker's SERVER clock: set the hour the London session opens in server time
+python -m xauusd_agents backtest ... --agents 12 --ib-start-hour 10 --ib-bars 2
+
+python -m xauusd_agents news                      # check the calendar feed parses on your PC
+python -m xauusd_agents mt5 --symbol XAUUSD --threshold 0.9 --sl-atr 1.5 --tp-atr 2.0 --news
+```
+`--news` blocks NEW entries 30 min before / after high-impact USD events (change with `--news-before/--news-after`). It fails closed if no calendar data is available. It is live-only: the free feed has no history, so it is not in backtests. Open positions keep their SL/TP.
