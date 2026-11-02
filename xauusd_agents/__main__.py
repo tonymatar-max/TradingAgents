@@ -186,7 +186,7 @@ def main():
 
     if a.cmd == "export":
         from .mt5_export import export_csv
-        export_csv(a.symbol, a.timeframe, a.start, a.end, a.out)
+        export_csv(a.symbol, a.timeframe, a.start, a.end, a.out, scale=a.agent_scale)
         return
 
     if a.cmd == "mt5":
