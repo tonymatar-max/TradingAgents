@@ -45,3 +45,13 @@ Agent periods are counted in candles, so on M30 they cover half the time they do
    `InpHtf = PERIOD_H1`, and `InpHistoryBars = 4000` (the 400-period EMA needs a longer warm-up).
 The EA uses the same agent inputs for the higher timeframe, whereas the Python `--agent-scale` option scales only the main timeframe,
 so run the parity check at default periods (scale 1).
+
+## Where to see what the EA is doing
+- **Experts tab** (View > Toolbox, Ctrl+T > Experts; not the "Journal" tab, which is the terminal's own log). Every new candle prints:
+  `Votes for candle 2026-11-02 10:00:00: 1_EMA_Trend BUY | 2_MACD_Momentum BUY | ... | 10_Linreg_Slope -`,
+  then the decision line `XAUUSD ...: HOLD (BUY 6 / SELL 1, need 9) -> HOLD`. When a signal appears it also prints the H4 confirmation,
+  and either `DRY-RUN BUY ...` / `PLACED BUY ...` or the reason it was skipped (news, spread, margin, cap, position open...).
+  Turn the vote line off with `InpPrintVotes = false`.
+- **Log files:** right-click the Experts tab > Open, or the folder `MQL5\Logs` (one file per day).
+- **Structured records:** `Common\Files\xauusd_ea\events.jsonl` (every candle with all votes) and the portal.
+- **Trades:** Trade tab (open positions), History tab (closed). Orders carry the comment "10-agent consensus" and the magic number.

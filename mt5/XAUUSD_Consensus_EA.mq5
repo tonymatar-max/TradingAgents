@@ -72,6 +72,7 @@ input string             InpNewsCurrency  = "USD";         // Currency of the ev
 
 //--- output for the portal
 input group "Records"
+input bool               InpPrintVotes    = true;          // Print every agent's vote for each candle in the Experts tab
 input bool               InpWriteEvents   = true;          // Write events.jsonl / status.json (Common\Files\xauusd_ea) for the portal
 
 //--- agent parameters (defaults = the Python version)
@@ -413,6 +414,14 @@ string IsoUtc()
 
 string N(const double v, const int digits = 5) { return DoubleToString(v, digits); }
 
+string VoteWord(const int v, const bool enabled)
+{
+   if(!enabled) return "off";
+   if(v == 1)   return "BUY";
+   if(v == -1)  return "SELL";
+   return "-";
+}
+
 void AppendEvent(const string json)
 {
    if(!InpWriteEvents) return;
@@ -591,6 +600,7 @@ string TryTrade(const string action, const double atr, const datetime barTime)
    if(InpUseHtf)
    {
       int d = HtfDirection();
+      if(InpPrintVotes) Print(EnumToString(InpHtf), " confirmation: ", d == 1 ? "BUY" : (d == -1 ? "SELL" : (d == 0 ? "no clear direction" : "unavailable")));
       if(d == 2) return action + " signal ignored: higher-timeframe candles unavailable";
       if(d != (buy ? 1 : -1)) return action + " signal ignored: " + EnumToString(InpHtf) + " does not confirm (" + IntegerToString(d) + ")";
    }
@@ -724,6 +734,13 @@ void OnNewBar()
    string status = action;
    if(action != "HOLD") status = TryTrade(action, atr[idx], barTime);
 
+   if(InpPrintVotes)
+   {
+      string line = "";
+      for(int k = 0; k < 10; k++)
+         line += (k > 0 ? " | " : "") + g_names[k] + " " + VoteWord(votes[idx][k], g_en[k]);
+      Print("Votes for candle ", g_lastBarStr, ": ", line);
+   }
    string vj = "";
    for(int k = 0; k < 10; k++)
       vj += (k > 0 ? "," : "") + Q(g_names[k]) + ":" + IntegerToString(g_en[k] ? votes[idx][k] : 0);
