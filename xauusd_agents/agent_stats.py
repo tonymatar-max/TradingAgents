@@ -17,11 +17,15 @@ from .backtest import Config, run_backtest
 from .committee import Committee
 
 
-def _signals(table: pd.DataFrame, required: int) -> pd.Series:
+def _signals(table: pd.DataFrame, required: int, require_cols=()) -> pd.Series:
     buys, sells = (table == 1).sum(axis=1), (table == -1).sum(axis=1)
+    ok_buy, ok_sell = buys >= required, sells >= required
+    for col in require_cols:
+        if col in table.columns:
+            ok_buy, ok_sell = ok_buy & (table[col] == 1), ok_sell & (table[col] == -1)
     out = pd.Series(0, index=table.index)
-    out[buys >= required] = 1
-    out[sells >= required] = -1
+    out[ok_buy] = 1
+    out[ok_sell] = -1
     return out
 
 
@@ -73,7 +77,7 @@ def _pf(stats):
     return stats.get("profit_factor", float("nan")) if stats.get("trades", 0) else float("nan")
 
 
-def backtest_report(df, agents, required, start, split, cfg: Config, dirn=None) -> pd.DataFrame:
+def backtest_report(df, agents, required, start, split, cfg: Config, dirn=None, require_cols=()) -> pd.DataFrame:
     from .htf import filter_signals
     com = Committee(agents, threshold=required / len(agents))
     table = com.vote_table(df)
@@ -89,13 +93,13 @@ def backtest_report(df, agents, required, start, split, cfg: Config, dirn=None) 
             return run_backtest(tr_df, com, cfg, start=start, signals=sig.loc[tr_df.index])
         return run_backtest(df, com, cfg, start=split, signals=sig)
 
-    full = _signals(table, required)
+    full = _signals(table, required, require_cols)
     base = {w: run(full, w) for w in ("all", "train", "test")}
     attr = attribution(base["all"][0], table).set_index("agent") if len(base["all"][0]) else pd.DataFrame()
     rows = []
     for name in table.columns:
         solo = {w: run(table[name], w)[2] for w in ("all", "train", "test")}
-        loo_sig = _signals(table.drop(columns=name), required)
+        loo_sig = _signals(table.drop(columns=name), required, require_cols)
         loo = {w: run(loo_sig, w)[2] for w in ("all", "train", "test")}
         d_tr = _pf(loo["train"]) - _pf(base["train"][2])
         d_te = _pf(loo["test"]) - _pf(base["test"][2])

@@ -150,3 +150,9 @@ python -m xauusd_agents export --symbol XAUUSD --timeframe M30 --from 2022-01-01
 python -m xauusd_agents agentstats --csv XAUUSD_M30_long.csv --from 2022-01-01 --split 2024-07-01 --sl-atr 2.0 --tp-atr 2.0 --htf-min 6 --htf-tf H1 --agent-scale 2
 ```
 `--agent-scale 2` doubles every agent period (same time spans as H1); `--agent-scale 1` keeps the numbers. `--htf-tf H1|H4|D1` picks the confirming timeframe (built from the main CSV, or pass `--htf-csv`). The EA has the same idea in `InpMainScale`.
+
+## Requiring specific agents
+`--require 6` makes Stochastic Bias (agent 6) a must-agree in addition to the vote count (`--require 3,6` = RSI and Stochastic). Works in `backtest`, `agentstats`, `optimize`, `confluence`, `mt5` (the Python bot). The EA does not have it yet.
+```
+python -m xauusd_agents agentstats --csv XAUUSD_H1_long.csv --from 2022-01-01 --split 2024-07-01 --threshold 0.9 --sl-atr 2.0 --tp-atr 2.0 --htf-min 6 --require 6
+```

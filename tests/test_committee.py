@@ -103,3 +103,20 @@ class TestRiskCap(unittest.TestCase):
         _, _, st2 = run_backtest(df, cfg=Config(balance=5000, fixed_lots=0.1, max_risk_pct=0.5), start=df.index[300])
         self.assertGreater(st2["trades"], 0)
         self.assertEqual(st2["skipped_by_risk_cap"], 0)
+
+
+class TestRequire(unittest.TestCase):
+    def test_required_agent_must_agree(self):
+        from xauusd_agents.agents import default_agents
+        from xauusd_agents.committee import Committee
+        df = synthetic_xauusd(1500)
+        ags = default_agents()
+        base, req6 = Committee(ags, 0.8), Committee(ags, 0.8, require=(6,))
+        self.assertEqual(req6.require_cols, ["6_Stochastic_Bias"])
+        t = base.vote_table(df)
+        sb, sr = base.signals(df, t), req6.signals(df, t)
+        self.assertTrue(((sr != 0) <= (sb != 0)).all())                      # only ever removes signals
+        self.assertTrue((t["6_Stochastic_Bias"][sr != 0] == sr[sr != 0]).all())  # and the required agent agrees on every one left
+        self.assertLess((sr != 0).sum(), (sb != 0).sum())
+        d = req6.decide(df)
+        self.assertIn(d.action, ("BUY", "SELL", "HOLD"))

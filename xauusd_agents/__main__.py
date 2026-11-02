@@ -57,11 +57,13 @@ def main():
     p.add_argument("--live", action="store_true", help="agentstats: analyse the live/dry-run paper trades in --logdir instead of a backtest")
     p.add_argument("--events", help="parity: the EA's events.jsonl (Common\\Files\\xauusd_ea)")
     p.add_argument("--agent-scale", type=float, default=1.0, help="multiply every agent period (2.0 on M30 keeps the same time spans as H1)")
+    p.add_argument("--require", default="", help="agent numbers (1-10) that MUST agree in addition to the vote count, e.g. 6 = Stochastic Bias, 3,6 = RSI and Stochastic")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
     agents = extended_agents(a.ib_bars, a.ib_start_hour) if a.agents == 12 else default_agents(a.agent_scale)
-    make_com = lambda: Committee(agents, threshold=a.threshold)
+    req = tuple(int(x) for x in a.require.split(",") if x.strip())
+    make_com = lambda: Committee(agents, threshold=a.threshold, require=req)
 
     def load_htf(df_):
         from .htf import RULES, resample_ohlc
@@ -139,12 +141,13 @@ def main():
         if a.htf_min:
             from .htf import htf_direction
             dirn = htf_direction(df, load_htf(df), a.htf_min)
-        req = make_com().required
-        res = backtest_report(df, agents, req, a.start, a.split,
+        req_votes = make_com().required
+        res = backtest_report(df, agents, req_votes, a.start, a.split,
                               Config(risk_pct=a.risk, spread=a.spread, sl_atr=a.sl_atr, tp_atr=a.tp_atr, balance=a.balance,
-                                     fixed_lots=a.lots), dirn)
+                                     fixed_lots=a.lots), dirn, make_com().require_cols)
         cp = res.attrs["committee_pf"]
-        print(f"Committee ({req}/{len(agents)} agree{', H4 filter ' + str(a.htf_min) if a.htf_min else ''}): "
+        print(f"Committee ({req_votes}/{len(agents)} agree{', H4 filter ' + str(a.htf_min) if a.htf_min else ''}"
+              f"{', must include agent(s) ' + a.require if a.require else ''}): "
               f"{res.attrs['committee_trades']} trades, PF all={cp['all']} train={cp['train']} test={cp['test']}")
         print(f"train = {a.start} -> {a.split}, test = {a.split} -> end\n")
         print(res.to_string(index=False))
