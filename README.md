@@ -149,4 +149,4 @@ compares the EA's logged votes with the Python agents; `tests/mql_mirror.py` pro
 python -m xauusd_agents export --symbol XAUUSD --timeframe M30 --from 2022-01-01 --out XAUUSD_M30_long.csv
 python -m xauusd_agents agentstats --csv XAUUSD_M30_long.csv --from 2022-01-01 --split 2024-07-01 --sl-atr 2.0 --tp-atr 2.0 --htf-min 6 --htf-tf H1 --agent-scale 2
 ```
-`--agent-scale 2` doubles every agent period (same time spans as H1); `--agent-scale 1` keeps the numbers. `--htf-tf H1|H4|D1` picks the confirming timeframe.
+`--agent-scale 2` doubles every agent period (same time spans as H1); `--agent-scale 1` keeps the numbers. `--htf-tf H1|H4|D1` picks the confirming timeframe (built from the main CSV, or pass `--htf-csv`). The EA has the same idea in `InpMainScale`.

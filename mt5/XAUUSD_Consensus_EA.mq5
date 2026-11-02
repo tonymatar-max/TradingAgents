@@ -21,7 +21,8 @@ input ENUM_RUN_MODE      InpMode          = RUN_DRY;       // Dry run = log + pa
 input ulong              InpMagic         = 26100;         // Magic number (tags this EA's orders)
 input ENUM_TIMEFRAMES    InpTF            = PERIOD_H1;     // Signal timeframe
 input bool               InpActOnStart    = false;         // Act on the last closed candle when attached (else wait for the next one)
-input int                InpHistoryBars   = 2500;          // Candles used to warm up the indicators
+input int                InpHistoryBars   = 2500;          // Candles used to warm up the indicators (raise it when scaling periods up)
+input double             InpMainScale     = 1.0;           // Multiply every agent period on the signal timeframe (2 on M30, 12 on M5 = same time spans as H1). The higher timeframe always uses 1.
 
 //--- committee
 input group "Committee"
@@ -117,6 +118,7 @@ input double InpLrMinR2 = 0.5;
 //+------------------------------------------------------------------+
 #define NA_V (-1.0e300)
 bool IsNum(const double v) { return v > -1.0e299; }
+int Sc(const int v, const double scale) { return (int)MathMax(1.0, MathFloor(v * scale + 0.5)); }   // round half up
 
 CTrade   g_trade;
 datetime g_lastBar  = 0;
@@ -150,8 +152,14 @@ void EmaSpan(const double &x[], double &out[], const int n, const int span)
 //| Compute the 10 agents' votes (+1 buy, -1 sell, 0 neutral)         |
 //| for every candle. Row n-1 is the forming candle: ignore it.        |
 //+------------------------------------------------------------------+
-void ComputeVotes(const MqlRates &r[], const int n, int &votes[][10], double &atrOut[])
+void ComputeVotes(const MqlRates &r[], const int n, int &votes[][10], double &atrOut[], const double scale)
 {
+   const int sEmaFast = Sc(InpEmaFast, scale), sEmaSlow = Sc(InpEmaSlow, scale), sEmaTrend = Sc(InpEmaTrend, scale);
+   const int sMacdFast = Sc(InpMacdFast, scale), sMacdSlow = Sc(InpMacdSlow, scale), sMacdSig = Sc(InpMacdSignal, scale);
+   const int sRsi = Sc(InpRsiPeriod, scale), sBb = Sc(InpBbPeriod, scale), sBbLag = Sc(InpBbLag, scale);
+   const int sDonE = Sc(InpDonEntry, scale), sDonX = Sc(InpDonExit, scale), sStK = Sc(InpStochK, scale), sStD = Sc(InpStochD, scale);
+   const int sAdx = Sc(InpAdxPeriod, scale), sSt = Sc(InpStPeriod, scale), sMomL = Sc(InpMomLong, scale), sMomS = Sc(InpMomShort, scale);
+   const int sLr = Sc(InpLrPeriod, scale), sAtrMom = Sc(InpAtrPeriod, scale);
    ArrayResize(votes, n);
    double h[], l[], c[];
    ArrayResize(h, n); ArrayResize(l, n); ArrayResize(c, n);
@@ -175,7 +183,7 @@ void ComputeVotes(const MqlRates &r[], const int n, int &votes[][10], double &at
    // ---- Agent 1: EMA trend
    {
       double e1[], e2[], e3[];
-      EmaSpan(c, e1, n, InpEmaFast); EmaSpan(c, e2, n, InpEmaSlow); EmaSpan(c, e3, n, InpEmaTrend);
+      EmaSpan(c, e1, n, sEmaFast); EmaSpan(c, e2, n, sEmaSlow); EmaSpan(c, e3, n, sEmaTrend);
       for(int i = 0; i < n; i++)
       {
          if(e1[i] > e2[i] && c[i] > e3[i]) votes[i][0] = 1;
@@ -185,10 +193,10 @@ void ComputeVotes(const MqlRates &r[], const int n, int &votes[][10], double &at
    // ---- Agent 2: MACD
    {
       double ef[], es[], line[], sig[];
-      EmaSpan(c, ef, n, InpMacdFast); EmaSpan(c, es, n, InpMacdSlow);
+      EmaSpan(c, ef, n, sMacdFast); EmaSpan(c, es, n, sMacdSlow);
       ArrayResize(line, n);
       for(int i = 0; i < n; i++) line[i] = ef[i] - es[i];
-      EmaSpan(line, sig, n, InpMacdSignal);
+      EmaSpan(line, sig, n, sMacdSig);
       for(int i = 0; i < n; i++)
       {
          double hist = line[i] - sig[i];
@@ -207,7 +215,7 @@ void ComputeVotes(const MqlRates &r[], const int n, int &votes[][10], double &at
          up[i] = (d > 0) ? d : 0.0;
          dn[i] = (d < 0) ? -d : 0.0;
       }
-      EmaAlpha(up, upE, n, 1.0 / InpRsiPeriod); EmaAlpha(dn, dnE, n, 1.0 / InpRsiPeriod);
+      EmaAlpha(up, upE, n, 1.0 / sRsi); EmaAlpha(dn, dnE, n, 1.0 / sRsi);
       for(int i = 0; i < n; i++)
       {
          double rsi = 50.0;
@@ -223,19 +231,19 @@ void ComputeVotes(const MqlRates &r[], const int n, int &votes[][10], double &at
       for(int i = 0; i < n; i++)
       {
          mid[i] = NA_V; wid[i] = NA_V;
-         if(i >= InpBbPeriod - 1)
+         if(i >= sBb - 1)
          {
             double s = 0;
-            for(int k = 0; k < InpBbPeriod; k++) s += c[i - k];
-            double m = s / InpBbPeriod, q = 0;
-            for(int k = 0; k < InpBbPeriod; k++) q += (c[i - k] - m) * (c[i - k] - m);
+            for(int k = 0; k < sBb; k++) s += c[i - k];
+            double m = s / sBb, q = 0;
+            for(int k = 0; k < sBb; k++) q += (c[i - k] - m) * (c[i - k] - m);
             mid[i] = m;
-            wid[i] = 2.0 * InpBbK * MathSqrt(q / InpBbPeriod);
+            wid[i] = 2.0 * InpBbK * MathSqrt(q / sBb);
          }
       }
       for(int i = 0; i < n; i++)
       {
-         bool expanding = (i >= InpBbLag && IsNum(wid[i]) && IsNum(wid[i - InpBbLag]) && wid[i] > wid[i - InpBbLag]);
+         bool expanding = (i >= sBbLag && IsNum(wid[i]) && IsNum(wid[i - sBbLag]) && wid[i] > wid[i - sBbLag]);
          if(!IsNum(mid[i]) || !expanding) continue;
          if(c[i] > mid[i]) votes[i][3] = 1;
          else if(c[i] < mid[i]) votes[i][3] = -1;
@@ -247,15 +255,15 @@ void ComputeVotes(const MqlRates &r[], const int n, int &votes[][10], double &at
       for(int i = 0; i < n; i++)
       {
          double h20 = NA_V, l20 = NA_V, h10 = NA_V, l10 = NA_V;
-         if(i >= InpDonEntry)
+         if(i >= sDonE)
          {
-            h20 = h[i - InpDonEntry]; l20 = l[i - InpDonEntry];
-            for(int k = i - InpDonEntry; k < i; k++) { h20 = MathMax(h20, h[k]); l20 = MathMin(l20, l[k]); }
+            h20 = h[i - sDonE]; l20 = l[i - sDonE];
+            for(int k = i - sDonE; k < i; k++) { h20 = MathMax(h20, h[k]); l20 = MathMin(l20, l[k]); }
          }
-         if(i >= InpDonExit)
+         if(i >= sDonX)
          {
-            h10 = h[i - InpDonExit]; l10 = l[i - InpDonExit];
-            for(int k = i - InpDonExit; k < i; k++) { h10 = MathMax(h10, h[k]); l10 = MathMin(l10, l[k]); }
+            h10 = h[i - sDonX]; l10 = l[i - sDonX];
+            for(int k = i - sDonX; k < i; k++) { h10 = MathMax(h10, h[k]); l10 = MathMin(l10, l[k]); }
          }
          int st = 0;
          if(IsNum(h20) && c[i] > h20) st = 1;
@@ -273,20 +281,20 @@ void ComputeVotes(const MqlRates &r[], const int n, int &votes[][10], double &at
       for(int i = 0; i < n; i++)
       {
          kk[i] = NA_V;
-         if(i >= InpStochK - 1)
+         if(i >= sStK - 1)
          {
             double hh = h[i], ll = l[i];
-            for(int k = 0; k < InpStochK; k++) { hh = MathMax(hh, h[i - k]); ll = MathMin(ll, l[i - k]); }
+            for(int k = 0; k < sStK; k++) { hh = MathMax(hh, h[i - k]); ll = MathMin(ll, l[i - k]); }
             if(hh != ll) kk[i] = 100.0 * (c[i] - ll) / (hh - ll);
          }
       }
       for(int i = 0; i < n; i++)
       {
-         if(!IsNum(kk[i]) || i < InpStochD - 1) continue;
+         if(!IsNum(kk[i]) || i < sStD - 1) continue;
          double s = 0; bool ok = true;
-         for(int k = 0; k < InpStochD; k++) { if(!IsNum(kk[i - k])) { ok = false; break; } s += kk[i - k]; }
+         for(int k = 0; k < sStD; k++) { if(!IsNum(kk[i - k])) { ok = false; break; } s += kk[i - k]; }
          if(!ok) continue;
-         double dd = s / InpStochD;
+         double dd = s / sStD;
          if(kk[i] > dd && kk[i] > 50.0) votes[i][5] = 1;
          else if(kk[i] < dd && kk[i] < 50.0) votes[i][5] = -1;
       }
@@ -302,8 +310,8 @@ void ComputeVotes(const MqlRates &r[], const int n, int &votes[][10], double &at
          plus[i]  = (upm > dnm && upm > 0) ? upm : 0.0;
          minus[i] = (dnm > upm && dnm > 0) ? dnm : 0.0;
       }
-      EmaAlpha(tr, a, n, 1.0 / InpAdxPeriod);
-      EmaAlpha(plus, pE, n, 1.0 / InpAdxPeriod); EmaAlpha(minus, mE, n, 1.0 / InpAdxPeriod);
+      EmaAlpha(tr, a, n, 1.0 / sAdx);
+      EmaAlpha(plus, pE, n, 1.0 / sAdx); EmaAlpha(minus, mE, n, 1.0 / sAdx);
       double pdi[], mdi[];
       ArrayResize(pdi, n); ArrayResize(mdi, n);
       double prevdx = 0;
@@ -315,7 +323,7 @@ void ComputeVotes(const MqlRates &r[], const int n, int &votes[][10], double &at
          dx[i] = (sum > 0) ? 100.0 * MathAbs(pdi[i] - mdi[i]) / sum : prevdx;
          prevdx = dx[i];
       }
-      EmaAlpha(dx, adx, n, 1.0 / InpAdxPeriod);
+      EmaAlpha(dx, adx, n, 1.0 / sAdx);
       for(int i = 0; i < n; i++)
       {
          if(adx[i] > InpAdxMin && pdi[i] > mdi[i]) votes[i][6] = 1;
@@ -326,7 +334,7 @@ void ComputeVotes(const MqlRates &r[], const int n, int &votes[][10], double &at
    {
       double a[], ub[], lb[], fub[], flb[];
       int d[];
-      EmaAlpha(tr, a, n, 1.0 / InpStPeriod);
+      EmaAlpha(tr, a, n, 1.0 / sSt);
       ArrayResize(ub, n); ArrayResize(lb, n); ArrayResize(fub, n); ArrayResize(flb, n); ArrayResize(d, n);
       for(int i = 0; i < n; i++)
       {
@@ -347,18 +355,20 @@ void ComputeVotes(const MqlRates &r[], const int n, int &votes[][10], double &at
    }
    // ---- Agent 9: time-series momentum
    {
-      for(int i = InpMomLong; i < n; i++)
+      double atrM[];
+      EmaAlpha(tr, atrM, n, 1.0 / sAtrMom);
+      for(int i = sMomL; i < n; i++)
       {
-         double r60 = c[i] / c[i - InpMomLong] - 1.0;
-         double r20 = c[i] / c[i - InpMomShort] - 1.0;
-         double noise = atrOut[i] / c[i] * InpMomNoise;
+         double r60 = c[i] / c[i - sMomL] - 1.0;
+         double r20 = c[i] / c[i - sMomS] - 1.0;
+         double noise = atrM[i] / c[i] * InpMomNoise;
          if(r60 > noise && r20 > 0) votes[i][8] = 1;
          else if(r60 < -noise && r20 < 0) votes[i][8] = -1;
       }
    }
    // ---- Agent 10: linear-regression slope with R^2
    {
-      int w = InpLrPeriod;
+      int w = sLr;
       double xm = (w - 1) / 2.0, xv = 0;
       for(int k = 0; k < w; k++) xv += (k - xm) * (k - xm);
       for(int i = w - 1; i < n; i++)
@@ -529,7 +539,7 @@ int HtfDirection()
    if(n < 400) return 2;
    int hv[][10];
    double ha[];
-   ComputeVotes(r, n, hv, ha);
+   ComputeVotes(r, n, hv, ha, 1.0);                      // higher timeframe: always the unscaled periods
    int idx = n - 2, buys = 0, sells = 0;                // last CLOSED higher-timeframe candle
    for(int k = 0; k < 10; k++)
    {
@@ -716,7 +726,7 @@ void OnNewBar()
    }
    int votes[][10];
    double atr[];
-   ComputeVotes(r, n, votes, atr);
+   ComputeVotes(r, n, votes, atr, InpMainScale);
 
    if(InpMode == RUN_DRY) PaperUpdate(r[idx].high, r[idx].low, barTime);
 

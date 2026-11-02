@@ -128,9 +128,10 @@ def compute_votes(rows, P):
         else: d[i] = 1 if c[i] > fub[i] else -1
     for i in range(n): votes[i][7] = d[i]
 
+    atr_m = ema_alpha(tr, 1.0 / P["atr_mom"])
     for i in range(P["mom_long"], n):
         r60 = c[i] / c[i - P["mom_long"]] - 1.0; r20 = c[i] / c[i - P["mom_short"]] - 1.0
-        noise = atr[i] / c[i] * P["mom_noise"]
+        noise = atr_m[i] / c[i] * P["mom_noise"]
         if r60 > noise and r20 > 0: votes[i][8] = 1
         elif r60 < -noise and r20 < 0: votes[i][8] = -1
 
@@ -149,4 +150,13 @@ def compute_votes(rows, P):
 DEFAULTS = dict(atr=14, ema_fast=20, ema_slow=50, ema_trend=200, macd_fast=12, macd_slow=26, macd_signal=9, rsi=14,
                 rsi_bull=55.0, rsi_bear=45.0, rsi_ob=80.0, rsi_os=20.0, bb=20, bb_k=2.0, bb_lag=5, don_entry=20, don_exit=10,
                 stoch_k=14, stoch_d=3, adx=14, adx_min=20.0, st_period=10, st_mult=3.0, mom_long=60, mom_short=20,
-                mom_noise=3.0, lr=30, lr_r2=0.5)
+                mom_noise=3.0, lr=30, lr_r2=0.5, atr_mom=14)
+
+PERIOD_KEYS = ("ema_fast", "ema_slow", "ema_trend", "macd_fast", "macd_slow", "macd_signal", "rsi", "bb", "bb_lag", "don_entry",
+               "don_exit", "stoch_k", "stoch_d", "adx", "st_period", "mom_long", "mom_short", "lr", "atr_mom")
+
+
+def scaled(scale):
+    """Same rule as Sc() in the EA: round half up, minimum 1. The stop ATR (key 'atr') is NOT scaled."""
+    import math
+    return {k: (max(1, int(math.floor(v * scale + 0.5))) if k in PERIOD_KEYS else v) for k, v in DEFAULTS.items()}

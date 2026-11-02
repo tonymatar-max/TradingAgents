@@ -37,14 +37,13 @@ Expect ~100% per agent. Small gaps right after the EA starts are normal (indicat
 Set `InpMode = RUN_DEMO` (otherwise it only logs), model "Every tick based on real ticks". The MT5 calendar is not available
 in the tester, so the news filter is skipped there. Expect results close to, not identical to, the Python backtest.
 
-## Running on M30 (or another lower timeframe)
-Agent periods are counted in candles, so on M30 they cover half the time they do on H1. Two ways to test:
-1. **Same numbers** (periods unchanged), or
-2. **Doubled periods** (same time spans as H1). Set these inputs: EMA 40/100/400, MACD 24/52/18, RSI 28, Bollinger 40 (lag 10),
-   Donchian 40/20, Stochastic 28/6, ADX 28, Supertrend 20, Momentum 120/40, Regression 60. Also set `InpTF = PERIOD_M30`,
-   `InpHtf = PERIOD_H1`, and `InpHistoryBars = 4000` (the 400-period EMA needs a longer warm-up).
-The EA uses the same agent inputs for the higher timeframe, whereas the Python `--agent-scale` option scales only the main timeframe,
-so run the parity check at default periods (scale 1).
+## Running on a lower timeframe (M30, M15, M5)
+Agent periods are counted in candles, so on M30 they cover half the time they do on H1. `InpMainScale` multiplies every agent period on
+the **signal timeframe only**; the higher timeframe (e.g. H4) always uses the unscaled periods, so the two never interfere.
+- M30 + H1 filter: `InpTF = PERIOD_M30`, `InpHtf = PERIOD_H1`, `InpMainScale = 2` (same time spans as H1) or 1.
+- M5 + H4 filter: `InpTF = PERIOD_M5`, `InpHtf = PERIOD_H4`, `InpMainScale = 12` (or 1).
+- Raise `InpHistoryBars` when scaling up (the longest EMA needs about 3x its length as warm-up): 4000 at scale 2, 9000 at scale 12.
+Rounding is "half up" with a minimum of 1, identical to `python -m xauusd_agents ... --agent-scale` (checked by `tests/test_mql_mirror.py`).
 
 ## Where to see what the EA is doing
 - **Experts tab** (View > Toolbox, Ctrl+T > Experts; not the "Journal" tab, which is the terminal's own log). Every new candle prints:

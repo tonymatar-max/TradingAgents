@@ -5,6 +5,7 @@ can measure agreement. All agents are causal (no look-ahead).
 """
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -25,7 +26,7 @@ class Agent(ABC):
         self.s = scale                      # multiplies every period (2.0 on M30 = the same time spans as on H1)
 
     def p(self, v: int) -> int:
-        return max(1, int(round(v * self.s)))
+        return max(1, int(math.floor(v * self.s + 0.5)))   # round half up (the EA uses the same rule)
 
     @abstractmethod
     def votes(self, df: pd.DataFrame) -> pd.Series: ...
