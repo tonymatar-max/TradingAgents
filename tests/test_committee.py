@@ -120,3 +120,14 @@ class TestRequire(unittest.TestCase):
         self.assertLess((sr != 0).sum(), (sb != 0).sum())
         d = req6.decide(df)
         self.assertIn(d.action, ("BUY", "SELL", "HOLD"))
+
+
+class TestNoSameBarReentry(unittest.TestCase):
+    def test_next_entry_is_after_the_exit_candle(self):
+        """A position that closes inside candle i must not be replaced by one opened at candle i's OPEN (impossible in reality)."""
+        df = synthetic_xauusd(4000)
+        sig = pd.Series(1, index=df.index)                      # always long: the committee state persists, as it often does
+        t, _, _ = run_backtest(df, cfg=Config(sl_atr=1.0, tp_atr=1.0), signals=sig, start=df.index[300])
+        self.assertGreater(len(t), 50)
+        gap = t.entry_i.to_numpy()[1:] - t.exit_i.to_numpy()[:-1]
+        self.assertTrue((gap >= 1).all(), f"{int((gap < 1).sum())} trades re-entered on the exit candle")

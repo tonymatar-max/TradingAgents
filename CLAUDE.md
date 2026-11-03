@@ -22,7 +22,8 @@ PowerShell task scripts in `scripts/`, tests in `tests/` (run: `python -m unitte
 - `mt5_bot.py` live/dry-run bot (paper positions in dry run, portal settings, stale-candle guard with broker-clock offset).
 - `portal.py` + `portal.html` local web page; edit panel (lots, risk, cap, pause, votes 7-10, stop/target ATR) behind an edit password.
 - `news.py` news blackout (unofficial community feed, fails closed) + daily brief. `mt5_export.py` chunked candle export.
-- `mt5/XAUUSD_Consensus_EA.mq5` MQL5 port. **Never compiled** (no MetaEditor in the cloud). `tests/mql_mirror.py` proves its algorithms equal the Python agents.
+- `mt5/XAUUSD_Consensus_EA.mq5` MQL5 port. The owner compiled it and ran it in the MT5 Strategy Tester (real ticks, 2026-01..10, 9/10, H4 filter 7, 0.3 lots: 129 trades, PF 1.44, +$33.9k on $5k; see `reports` notes below). `tests/mql_mirror.py` proves its algorithms equal the Python agents.
+- `tester_report.py` + `reportcheck` command: parse an MT5 tester report (`ReportTester-*.html`, UTF-16) and compare it trade by trade with the Python backtest (`--tester-report FILE --csv XAUUSD_H1_long.csv`).
 
 ## Findings so far (all on the owner's real MT5 history 2022-2026 unless stated)
 - Settings with best evidence: 8-9 of 10 agree, H4 filter needs 6 agents, stop 2.0 x ATR, target 2.0 x ATR. By-year profit factor with 8/10 ~1.20-1.54, 2026 strongest.
@@ -32,11 +33,14 @@ PowerShell task scripts in `scripts/`, tests in `tests/` (run: `python -m unitte
 - Stochastic Bias (6) agreement correlates with wins on every timeframe (e.g. H1 60.0% vs 50.7%); RSI Regime (3) too. EMA/Donchian/TS-momentum/Supertrend almost never dissent (redundant).
 - Leave-one-out "HURTS/helps" verdicts are confounded when agents are redundant (removing one makes the vote stricter). Trust the by-vote-count table.
 - Fixed lots are risky on a ~$4.6k demo: 0.5 lots risks ~39% per trade; 0.3 lots ~23%. Bot default sizing is 1% risk.
-- Backtests are optimistic (exact stop fills, no slippage); expect live profit factor ~1.1-1.3 with flat stretches.
+- Backtests are optimistic; expect live profit factor ~1.1-1.3 with flat stretches. Real-tick tester check: stop fills averaged $0.20 worse than the level (worst $4.6), targets $0.44 better, commission+swap ~1.9% of net profit, so slippage is negligible on H1 with ~$42 median stops.
+- **Backtest bug found and fixed 2026-11-03:** `run_backtest` let a new trade open at the OPEN of the same candle in which the previous trade exited (and ignored that candle's range for the new trade). The EA can only enter on the next candle. On synthetic data this overstated PF (2.18 -> 1.78, trades 198 -> 173). **All earlier Python numbers (profit factors, avg R by vote count, by-year tables, sweeps) were measured with the bug and are optimistic by an unknown amount on real data; rerun them.** Relative conclusions (more agreement is better, lower timeframes worse) probably hold; absolute numbers will drop, and the 8-agree bucket may turn negative.
+- Tester report of the EA (above): 3 of 10 months lost money; Jan, Mar, Aug made ~94% of the profit; balance drawdown 52.7%, equity drawdown 61.9% at 0.3 fixed lots on $5k; largest loss -$7,288 = the 2 Feb stop ($242.84), identical to Python's stop distance for that trade (ATR matches).
 
 ## Pending / ideas
 1. Run the `--require 6` comparison on H1 (9/10 vs 9/10 + Stochastic vs 8/10 + Stochastic); adopt only if profit factor improves in BOTH halves. If it helps, add `require` to the EA.
-2. Compile the EA in MetaEditor (F7), fix errors, run `parity` against Python on the same candles (expect ~100%).
+2. EA compiles and trades in the tester. Run `reportcheck` (trade-by-trade vs Python) and `parity` (votes) to confirm they agree. NOTE: the tester report's inputs lacked `InpMainScale` and `InpPrintVotes`, so the owner runs an older EA build: tell them to copy the latest `mt5/XAUUSD_Consensus_EA.mq5`.
+2b. Rerun the key Python backtests after the re-entry fix (by-year, `agentstats` vote-count table, `--require 6` comparison) before trusting any earlier number.
 3. Forward test 3-4 weeks in dry run (portal paper trades), then compare with the backtest; `agentstats --live` for per-agent live stats.
 4. Verify the news feed (`python -m xauusd_agents news`); the EA uses MT5's own calendar instead.
 5. The article https://www.litefinance.org/blog/for-investors/gold-trading/best-indicators-for-trading-gold/ was blocked in the cloud: read it, map its indicators to the existing agents, test any genuinely new one on H1 full history (both halves).

@@ -50,6 +50,7 @@ def run_backtest(df: pd.DataFrame, committee: Committee | None = None, cfg: Conf
     curve = np.full(len(df), cfg.balance, dtype=float)
 
     for i in range(1, len(df)):
+        exited_now = False
         if pos:
             d = pos["dir"]
             hit_sl = (l[i] <= pos["sl"]) if d == 1 else (h[i] >= pos["sl"])
@@ -61,7 +62,8 @@ def run_backtest(df: pd.DataFrame, committee: Committee | None = None, cfg: Conf
                 trades.append({**pos, "exit": exit_px, "exit_i": i, "pnl": pnl,
                                "reason": ("STOPOUT" if pos["so"] else "SL") if hit_sl else "TP"})
                 pos = None
-        if pos is None and equity > 0 and s[i - 1] != 0 and not np.isnan(a[i - 1]):
+                exited_now = True     # a position closed inside this candle: the next entry can only be at the NEXT candle's open
+        if pos is None and not exited_now and equity > 0 and s[i - 1] != 0 and not np.isnan(a[i - 1]):
             d = int(s[i - 1])
             entry = o[i] + d * cfg.spread  # spread: fill is worse in both directions
             stop = cfg.sl_atr * a[i - 1]

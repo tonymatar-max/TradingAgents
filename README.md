@@ -156,3 +156,9 @@ python -m xauusd_agents agentstats --csv XAUUSD_M30_long.csv --from 2022-01-01 -
 ```
 python -m xauusd_agents agentstats --csv XAUUSD_H1_long.csv --from 2022-01-01 --split 2024-07-01 --threshold 0.9 --sl-atr 2.0 --tp-atr 2.0 --htf-min 6 --require 6
 ```
+
+## Checking an MT5 Strategy Tester report against the Python backtest
+```
+python -m xauusd_agents reportcheck --tester-report "C:\Users\you\OneDrive\Desktop\ReportTester-123.html" --csv XAUUSD_H1_long.csv --spread 0.30
+```
+Reads the EA's inputs, period, deposit and leverage from the report, runs the Python backtest with the same settings, and prints both result sets plus how many trades start on the same candle in the same direction.

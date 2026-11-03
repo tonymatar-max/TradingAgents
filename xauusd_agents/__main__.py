@@ -12,7 +12,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal", "agentstats", "parity"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal", "agentstats", "parity", "reportcheck"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -58,6 +58,7 @@ def main():
     p.add_argument("--events", help="parity: the EA's events.jsonl (Common\\Files\\xauusd_ea)")
     p.add_argument("--agent-scale", type=float, default=1.0, help="multiply every agent period (2.0 on M30 keeps the same time spans as H1)")
     p.add_argument("--require", default="", help="agent numbers (1-10) that MUST agree in addition to the vote count, e.g. 6 = Stochastic Bias, 3,6 = RSI and Stochastic")
+    p.add_argument("--tester-report", dest="report_file", help="reportcheck: MT5 Strategy Tester report (.html)")
     a = p.parse_args()
 
     from .agents import default_agents, extended_agents
@@ -105,6 +106,40 @@ def main():
             print(f"Broker server clock = UTC{snapped / 3600:+g} (use --server-utc-offset {snapped / 3600:g} if you want to fix it)")
         else:
             print("Cannot tell: the last tick is old, so the market looks closed. Run this again while gold is trading.")
+        return
+
+    if a.cmd == "reportcheck":
+        from .tester_report import compare, parse_report
+        from .htf import filter_signals, htf_direction
+        if not (a.report_file and a.csv):
+            raise SystemExit("reportcheck needs --tester-report (tester .html) and --csv (the SAME symbol/timeframe candles, covering the test period)")
+        rep_ = parse_report(a.report_file)
+        mt, inp, ea_t = rep_["meta"], rep_["inputs"], rep_["trades"]
+        votes, htf_min = int(inp.get("InpVotes", 9)), int(inp.get("InpHtfMin", 0)) if inp.get("InpUseHtf", "true") == "true" else 0
+        sl, tp = float(inp.get("InpSlAtr", 2.0)), float(inp.get("InpTpAtr", 2.0))
+        fixed = float(inp["InpLots"]) if inp.get("InpLotMode", "0") == "0" else None
+        df_all = load_csv(a.csv)
+        start, end = mt.get("start", str(df_all.index[0])), mt.get("end", str(df_all.index[-1]))
+        df = df_all[: pd.Timestamp(end) + pd.Timedelta(days=1)]
+        com = Committee(default_agents(), threshold=votes / 10, require=req)
+        sig = com.signals(df)
+        if htf_min:
+            sig = filter_signals(sig, htf_direction(df, load_htf(df), htf_min))
+        cfg = Config(balance=mt.get("deposit", 10000.0), sl_atr=sl, tp_atr=tp, spread=a.spread, fixed_lots=fixed,
+                     risk_pct=float(inp.get("InpRiskPct", 1.0)) / 100, leverage=mt.get("leverage", 0.0))
+        ptr, _, _ = run_backtest(df, com, cfg, start=start, signals=sig)
+        res = compare(rep_, ptr, df.index)
+        print(f"Report: {mt.get('expert')} {mt.get('symbol')} {mt.get('period')}  quality {mt.get('quality')}")
+        print(f"EA inputs used for Python: votes {votes}, H4 filter {htf_min or 'off'}, stop {sl} / target {tp}, "
+              f"{'fixed ' + str(fixed) + ' lots' if fixed else 'risk-based'}, balance {cfg.balance}, spread {a.spread}\n")
+        print(f"{'':10s}{'trades':>8s}{'win%':>8s}{'PF':>7s}{'net $':>12s}")
+        for k, lab in (("ea", "EA (tester)"), ("python", "Python")):
+            v = res[k]; print(f"{lab:10s}{v['trades']:>8}{v['win%']:>8}{v['pf']:>7}{v['net']:>12}")
+        print(f"\nSame entry candle and direction in both: {res['matched']}  (EA-only {len(res['ea_only'])}, Python-only {len(res['py_only'])})")
+        print(f"Same exit reason on matched trades: {res['same_exit_reason_%']}%   median entry-price difference: {res['entry_price_diff_median']}")
+        for lab, key in (("EA-only", "ea_only"), ("Python-only", "py_only")):
+            if res[key]:
+                print(f"{lab} (first 8): " + ", ".join(f"{t:%m-%d %H:%M} {'BUY' if d > 0 else 'SELL'}" for t, d in res[key][:8]))
         return
 
     if a.cmd == "parity":
