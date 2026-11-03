@@ -30,6 +30,7 @@ PowerShell task scripts in `scripts/`, tests in `tests/` (run: `python -m unitte
 
 ### Corrected (after the re-entry fix; EA real-tick tester agrees with Python within ~9% on 2026)
 - Python vs EA tester, 2026, 9/10 + H4 filter 7, 0.3 lots: EA 129 trades PF 1.44 net $33,888; Python 125 trades PF 1.41 net $31,078; 115 trades start on the same candle+direction, 99.1% same exit reason, median entry-price diff $0.30. Mismatches are near-pairs ~1 candle apart (suspected: tester-built candles vs exported candles).
+- Re-run of the same tester test with the NEWER EA build (has `InpMainScale`, `InpPrintVotes`; H1 tester chart, leverage 1:200): identical 129 trades (same times, directions, exits; entry price diff <= $0.07; net $33,887.46 vs $33,887.58). So the EA update changed nothing and leverage 1:100 vs 1:200 does not matter here. `reportcheck` now also reads `.xlsx` reports (needs openpyxl).
 - H1, 8/10 + H4 filter 6, stop/target 2.0, 1% sizing, 2022-01..2026-10: 1,127 trades, **PF 1.10** (train 2022-01..2024-06: 0.99, test: 1.19).
 - By agreement level (R multiples; early = to 2024-06, late = after): **8 agree -0.014R (PF 0.97; -0.022/-0.007)**; **9 agree +0.100R (PF 1.22; +0.009/+0.189)**; **10 agree +0.134R (PF 1.31; +0.049/+0.205)**. 8-agree loses money: use 9 or 10 only.
 - The edge is regime dependent: ~0 in 2022-mid 2024 even at 9/10, ~+0.19R since mid 2024 (2026 strongest). Next idea: only trade when volatility/trend strength is high (test on full history, both halves).

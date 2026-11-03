@@ -64,6 +64,19 @@ class ReportCheck(unittest.TestCase):
         self.assertEqual(len(r["trades"]), len(self.trades)); self.assertEqual(r["trades"].reason.iloc[0], self.trades.reason.iloc[0])
         self.assertAlmostEqual(r["trades"].sl.iloc[0], self.trades.sl.iloc[0], places=2)
 
+    def test_xlsx_report_parses_like_the_html_one(self):
+        import openpyxl
+        from xauusd_agents.tester_report import _rows
+        p = os.path.join(self.dir, "r2.html"); write_report(p, self.trades, self.df, self.inputs, "2024.03.01", self.end)
+        wb = openpyxl.Workbook(); ws = wb.active
+        for row in _rows(p):
+            ws.append([float(c) if c.replace(".", "", 1).replace("-", "", 1).isdigit() and "." in c and len(c) < 8 else c for c in row])
+        x = os.path.join(self.dir, "r2.xlsx"); wb.save(x)
+        a, b = parse_report(p), parse_report(x)
+        self.assertEqual(len(a["trades"]), len(b["trades"]))
+        self.assertAlmostEqual(a["trades"].net.sum(), b["trades"].net.sum(), places=2)
+        self.assertEqual(b["inputs"]["InpVotes"], "8"); self.assertEqual(b["meta"]["start"], "2024-03-01")
+
     def run_cli(self, report):
         out = subprocess.run([sys.executable, "-m", "xauusd_agents", "reportcheck", "--tester-report", report, "--csv", self.csv, "--spread", "0.30"],
                              capture_output=True, text=True, timeout=600)

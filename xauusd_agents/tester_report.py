@@ -7,7 +7,23 @@ from html.parser import HTMLParser
 import pandas as pd
 
 
+def _rows_xlsx(path: str) -> list[list[str]]:
+    try:
+        import openpyxl
+    except ImportError:
+        raise SystemExit("Reading .xlsx reports needs openpyxl: python -m pip install openpyxl")
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    out = []
+    for row in wb.worksheets[0].iter_rows(values_only=True):
+        cells = [str(c).strip() for c in row if c is not None and str(c).strip() != ""]
+        if cells:
+            out.append(cells)
+    return out
+
+
 def _rows(path: str) -> list[list[str]]:
+    if path.lower().endswith((".xlsx", ".xlsm")):
+        return _rows_xlsx(path)
     raw = open(path, "rb").read()
     for enc in ("utf-16", "utf-8-sig", "cp1252"):
         try:
@@ -70,13 +86,13 @@ def parse_report(path: str) -> dict:
     for r in rows[i_orders + 2:i_deals]:
         if len(r) >= 10 and re.match(r"\d{4}\.", r[0]) and r[3] in ("buy", "sell"):
             try:
-                levels[int(r[1])] = (_num(r[6]), _num(r[7]))
+                levels[int(float(r[1]))] = (_num(r[6]), _num(r[7]))
             except ValueError:
                 pass
     deals = []
     for r in rows[i_deals + 2:]:
         if len(r) >= 12 and re.match(r"\d{4}\.", r[0]) and r[4] in ("in", "out"):
-            deals.append({"time": pd.Timestamp(r[0].replace(".", "-", 2)), "side": r[3], "dirn": r[4], "price": _num(r[6]), "order": int(r[7]),
+            deals.append({"time": pd.Timestamp(r[0].replace(".", "-", 2)), "side": r[3], "dirn": r[4], "price": _num(r[6]), "order": int(float(r[7])),
                           "comm": _num(r[8]), "swap": _num(r[9]), "profit": _num(r[10]), "bal": _num(r[11]), "comment": r[12] if len(r) > 12 else ""})
     d = pd.DataFrame(deals)
     ins, outs = d[d.dirn == "in"].reset_index(drop=True), d[d.dirn == "out"].reset_index(drop=True)
