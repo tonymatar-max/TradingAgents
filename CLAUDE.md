@@ -60,4 +60,5 @@ PowerShell task scripts in `scripts/`, tests in `tests/` (run: `python -m unitte
 ## Pitfalls learned
 - Wire new CLI flags through the real command line and test it (`tests/test_htf.py::CliPaths`); an earlier `optimize --htf-min` silently did nothing.
 - The PowerShell scripts, EA, portal edit flow and MT5 calls were never run against a real terminal by the author. Treat as unverified until the owner confirms.
+- MT5 tester reports with header `Currency: profit in pips` are INVALID for money results (the tester was set to count pips: one 0.3-lot trade 'lost' $5,274 on a $17 move and hit a margin stop-out after 49 bars). Make sure the tester Deposit currency is USD and the report shows many trades before interpreting it.
 - Do not select settings from the same data you judge them on; ~54 combinations were already tried on 2022-2026, so improvements are somewhat flattering.
