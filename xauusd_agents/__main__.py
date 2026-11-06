@@ -202,7 +202,17 @@ def main():
 
     if a.cmd == "portal":
         from .portal import serve
-        serve(a.logdir, a.host, a.port, a.token)
+        checker = None
+        if a.csv:
+            import math
+            from .entry_check import EntryChecker
+            reviewer = None
+            if a.ai_review != "off":
+                from .ai_review import AiReviewer
+                reviewer = AiReviewer(a.ai_url, a.ai_model, "shadow")
+            checker = EntryChecker(a.csv, a.htf_csv, a.htf_tf, reviewer, votes=math.ceil(round(a.threshold * 10, 9)),
+                                   htf_min=a.htf_min, sl_atr=a.sl_atr, tp_atr=a.tp_atr)
+        serve(a.logdir, a.host, a.port, a.token, checker=checker)
         return
 
     if a.cmd == "aireport":

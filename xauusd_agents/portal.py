@@ -102,8 +102,9 @@ def build_state(logdir: str) -> dict:
             "news": news, "editing": {"file": ls.read(logdir), "limits": ls.LIMITS, "audit": _audit(logdir)}}
 
 
-def make_handler(logdir: str, token: str | None, write_token: str | None = None, loopback: bool = True):
-    """token: optional password for READING. write_token: password for EDITING (always enforced)."""
+def make_handler(logdir: str, token: str | None, write_token: str | None = None, loopback: bool = True, checker=None):
+    """token: optional password for READING. write_token: password for EDITING and for entry checks (always enforced).
+    checker: optional entry_check.EntryChecker for the "check an entry at a time" button."""
     write_token = write_token or edit_token(logdir, token)
 
     class H(BaseHTTPRequestHandler):
@@ -133,7 +134,9 @@ def make_handler(logdir: str, token: str | None, write_token: str | None = None,
             if not self._read_ok(u):
                 return self._send(401, b"token required: open /?token=YOUR_TOKEN", "text/plain")
             if u.path == "/api/state":
-                return self._json(200, build_state(logdir))
+                st = build_state(logdir)
+                st["check"] = checker.caps() if checker else {"csv": False, "ai": False}
+                return self._json(200, st)
             if u.path in ("/", "/index.html"):
                 return self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
             self._send(404, b"not found", "text/plain")
@@ -152,6 +155,8 @@ def make_handler(logdir: str, token: str | None, write_token: str | None = None,
             # 2) password
             if not hmac.compare_digest(self.headers.get("X-Edit-Token", ""), write_token):
                 return self._json(401, {"error": "wrong or missing edit password"})
+            if u.path == "/api/check":
+                return self._check()
             if u.path not in ("/api/settings", "/api/settings/reset"):
                 return self._json(404, {"error": "not found"})
             who = self.client_address[0]
@@ -172,12 +177,59 @@ def make_handler(logdir: str, token: str | None, write_token: str | None = None,
             return self._json(200, {"ok": True, "saved": clean,
                                     "note": "the bot applies it within ~15 seconds"})
 
+        def _check(self):
+            """Replay the committee (and optionally the AI reviewer) on a past candle. Read-only: never trades."""
+            from .entry_check import CheckError
+            if checker is None:
+                return self._json(400, {"error": "Entry check is off. Start the portal with --csv FILE."})
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                if n > MAX_BODY:
+                    return self._json(413, {"error": "body too large"})
+                raw = json.loads(self.rfile.read(n) or b"{}")
+                if not isinstance(raw, dict):
+                    raise ValueError
+            except ValueError:
+                return self._json(400, {"error": "invalid JSON"})
+            try:
+                st = (build_state(logdir).get("status") or {}).get("settings") or {}   # what the running bot uses now
+                votes = _int_in(raw.get("votes"), 1, 10) or _int_in(st.get("votes"), 1, 10)
+                htf = _int_in(raw.get("htf_min"), 0, 10)
+                if htf is None:
+                    htf = _int_in(st.get("htf_min"), 0, 10)
+                res = checker.check(str(raw.get("time", "")), votes=votes, htf_min=htf,
+                                    sl_atr=_num_in(st.get("sl_atr"), 0.5, 5), tp_atr=_num_in(st.get("tp_atr"), 0.5, 8),
+                                    use_ai=bool(raw.get("ai")) and checker.reviewer is not None)
+            except CheckError as e:
+                return self._json(400, {"error": str(e)})
+            except Exception as e:  # noqa: BLE001 - never crash the portal thread
+                return self._json(500, {"error": f"check failed: {type(e).__name__}: {e}"[:300]})
+            return self._json(200, res)
+
     return H
 
 
-def serve(logdir="logs", host="127.0.0.1", port=8765, token=None):
+def _int_in(v, lo, hi):
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return None
+    return v if lo <= v <= hi else None
+
+
+def _num_in(v, lo, hi):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if lo <= v <= hi else None
+
+
+def serve(logdir="logs", host="127.0.0.1", port=8765, token=None, checker=None):
     wt = edit_token(logdir, token)
-    srv = ThreadingHTTPServer((host, port), make_handler(logdir, token, wt, loopback=host in ("127.0.0.1", "localhost")))
+    srv = ThreadingHTTPServer((host, port), make_handler(logdir, token, wt, loopback=host in ("127.0.0.1", "localhost"), checker=checker))
+    print("Entry check: " + ("on (%s%s)" % (checker.csv_path, ", AI on" if checker.reviewer else ", AI off") if checker else
+                             "off (start the portal with --csv FILE to enable the check button)"))
     where = "http://%s:%d/" % ("127.0.0.1" if host in ("127.0.0.1", "0.0.0.0") else host, port)
     print(f"Portal running at {where}{'?token=...' if token else ''}  (reading {os.path.abspath(logdir)})  Ctrl+C to stop")
     print(f"Edit password (needed to change settings on the page): {wt}   [also in {os.path.join(logdir, 'portal_token.txt')}]")

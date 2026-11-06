@@ -166,6 +166,30 @@
     </div>
   </section>
 
+  <section class="card" style="margin-bottom:12px" aria-labelledby="h-check">
+    <h2 id="h-check">Check an entry at a particular time</h2>
+    <div class="hint" id="check-hint">Replays the committee on one candle from the candle file, with the same rules as the bot. It never trades.</div>
+    <div class="form" style="margin-top:10px">
+      <div class="row">
+        <label for="chk-time">Candle (broker time)</label>
+        <input type="datetime-local" id="chk-time" step="3600" aria-label="Candle open time in the candle file's clock">
+        <span class="hint" id="chk-range"></span>
+      </div>
+      <div class="row">
+        <label for="chk-votes">Agents that must agree</label>
+        <select id="chk-votes" aria-label="Agents that must agree"><option value="">as the bot (current setting)</option><option>7</option><option>8</option><option>9</option><option>10</option></select>
+        <label style="min-width:0;color:var(--ink)"><input type="checkbox" id="chk-ai"> Ask the AI reviewer too</label>
+      </div>
+      <div class="row">
+        <label for="chk-pwd">Password</label>
+        <input type="password" id="chk-pwd" autocomplete="off" placeholder="from logs\portal_token.txt">
+        <button type="button" class="primary" id="chk-go">Check entry</button>
+      </div>
+      <div id="chk-msg" class="msg" role="status" aria-live="polite"></div>
+      <div id="chk-out" aria-live="polite"></div>
+    </div>
+  </section>
+
   <section class="card" style="margin-bottom:12px" aria-labelledby="h-trades">
     <h2 id="h-trades">Paper trades (closed)</h2>
     <div class="scroll" id="trades"></div>
@@ -372,11 +396,62 @@ function renderAudit(a) {
     a.map(x => `<tr><td>${esc(x.ts)}</td><td>${esc(x.by)}</td><td>${esc(x.action === "reset" ? "reset to startup settings" : Object.entries(x.new || {}).map(([k, v]) => k + ": " + (x.old && x.old[k] != null ? x.old[k] : "–") + " → " + (v === null ? "auto" : v)).join(", "))}</td></tr>`).join("") + "</tbody></table>" : "";
 }
 
+// ---- check an entry at a particular time -------------------------------------------------------------------------
+try { $("chk-pwd").value = sessionStorage.getItem("editpwd") || ""; } catch (e) {}
+function checkCaps(c) {
+  c = c || {};
+  const on = !!c.csv;
+  $("chk-go").disabled = !on; $("chk-time").disabled = !on;
+  $("chk-ai").disabled = !c.ai; $("chk-ai").parentElement.style.opacity = c.ai ? "" : ".5";
+  $("chk-ai").title = c.ai ? "" : "Start the portal with --ai-review shadow to enable";
+  $("check-hint").textContent = on
+    ? "Replays the committee on one candle from the candle file, with the same rules as the bot. It never trades. Times are the candle file's clock (your broker's server time)."
+    : (c.error || "Not available: start the portal with --csv FILE (for example XAUUSD_H1_long.csv).");
+  $("chk-range").textContent = on ? `data ${c.first.slice(0, 16)} to ${c.last.slice(0, 16)}` : "";
+  if (on) { $("chk-time").min = c.first.slice(0, 16).replace(" ", "T"); $("chk-time").max = c.last.slice(0, 16).replace(" ", "T"); }
+}
+const CHK_V = { 1: "BUY", "-1": "SELL", 0: "neutral" };
+function renderCheck(r) {
+  const act = r.committee.action, c = r.committee;
+  const head = r.entry.startsWith("WOULD") ? act : "HOLD";
+  let h = `<div class="tally"><span class="big ${head}-t">${esc(r.entry)}</span><span class="muted">candle opened ${esc(r.bar.slice(0, 16))}, closed ${esc(r.bar_closes.slice(0, 16))}</span></div>
+    <div class="tally" style="margin-top:4px"><span>BUY <b>${c.buy}</b></span><span>SELL <b>${c.sell}</b></span><span>neutral <b>${c.neutral}</b></span><span class="muted">need ${c.need} of ${r.settings.of}</span><span class="muted">close ${r.close}, ATR ${r.atr}</span></div>
+    <div class="chips">${r.agents.map(a => `<div class="chip ${a.vote === 1 ? "BUY" : a.vote === -1 ? "SELL" : ""}"><span>${esc(short(a.name))}</span><b>${CHK_V[a.vote]}</b></div>`).join("")}</div>`;
+  if (r.htf) h += `<div class="hint">${esc(r.htf.tf)}: ${r.htf.confirms ? "confirms" : "does not confirm"} (needs ${r.htf.needs} agents, direction ${r.htf.direction > 0 ? "BUY" : r.htf.direction < 0 ? "SELL" : "none"})</div>`;
+  if (r.plan) h += `<div style="margin-top:8px">Plan: enter about <b>${r.plan.approx_entry}</b>, stop <b>${r.plan.stop}</b>, target <b>${r.plan.target}</b> <span class="hint">(${esc(r.plan.note)})</span></div>`;
+  if (r.outcome) {
+    const o = r.outcome, good = o.result === "TP", bad = o.result === "SL";
+    h += `<div style="margin-top:6px">What happened next: <b class="${good ? "pos" : bad ? "neg" : ""}">${esc(o.result)}</b>${o.R != null ? ` (${o.R > 0 ? "+" : ""}${o.R}R)` : ""}${o.at ? ` at ${esc(String(o.at).slice(0, 16))}` : ""} <span class="hint">${esc(o.note || o.why || "")}</span></div>`;
+  }
+  if (r.ai) {
+    const a = r.ai;
+    h += `<div class="preview ${a.verdict === "VETO" ? "warn" : ""}" style="margin-top:8px"><b>AI reviewer: ${esc(a.verdict)}</b>${a.reason ? " - " + esc(a.reason) : ""}
+      <div class="hint">${a.model ? esc(a.model) + ", " + a.latency_ms + " ms. " : ""}${esc(a.warning || "")}</div></div>`;
+  }
+  $("chk-out").innerHTML = h;
+}
+$("chk-go").onclick = async () => {
+  const t = $("chk-time").value, pwd = $("chk-pwd").value, m = $("chk-msg");
+  const say2 = (x, ok) => { m.textContent = x; m.className = "msg " + (ok ? "ok" : "err"); };
+  if (!t) return say2("Pick a candle time first.", false);
+  try { sessionStorage.setItem("editpwd", pwd); } catch (e) {}
+  const b = $("chk-go"); b.disabled = true; say2($("chk-ai").checked ? "Checking and asking the AI (up to ~30 s)..." : "Checking...", true);
+  try {
+    const body = { time: t.replace("T", " "), ai: $("chk-ai").checked };
+    if ($("chk-votes").value) body.votes = +$("chk-votes").value;
+    const r = await fetch("api/check" + qs, { method: "POST", headers: { "Content-Type": "application/json", "X-Edit-Token": pwd }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || r.status);
+    say2("", true); renderCheck(j);
+  } catch (e) { $("chk-out").innerHTML = ""; say2("Not checked: " + e.message, false); }
+  finally { b.disabled = false; }
+};
+
 async function tick() {
   try {
     const r = await fetch("api/state" + (token ? "?token=" + encodeURIComponent(token) : ""), { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
-    const j = await r.json(); last = j; render(j); fillForm(j); updatePreview(); renderAudit((j.editing || {}).audit);
+    const j = await r.json(); last = j; render(j); fillForm(j); updatePreview(); renderAudit((j.editing || {}).audit); checkCaps(j.check);
   } catch (e) {
     const live = $("live"); live.className = "pill bad"; live.lastChild.textContent = "portal cannot read data (" + e.message + ")";
   }

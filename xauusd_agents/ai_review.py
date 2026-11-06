@@ -51,20 +51,24 @@ def parse_verdict(raw: str) -> tuple[str, str]:
     """Defensive parse of the model reply. Anything not clearly ALLOW or VETO becomes ERROR (fail open)."""
     if not isinstance(raw, str):
         return "ERROR", "reply was not text"
-    s = raw.strip()
-    if s.startswith("```"):
-        s = s.strip("`").removeprefix("json").strip()
-    a, b = s.find("{"), s.rfind("}")
-    if a < 0 or b < a:
-        return "ERROR", "no JSON in reply"
-    try:
-        o = json.loads(s[a:b + 1])
-    except ValueError:
-        return "ERROR", "invalid JSON in reply"
-    v = str(o.get("verdict", "")).strip().upper() if isinstance(o, dict) else ""
-    if v not in ("ALLOW", "VETO"):
-        return "ERROR", "verdict missing or not ALLOW/VETO"
-    return v, str(o.get("reason", ""))[:300]
+    dec, pos, found, seen_json = json.JSONDecoder(), 0, [], False
+    while True:                                  # every JSON object in the reply; some free models think aloud and echo the template first
+        a = raw.find("{", pos)
+        if a < 0:
+            break
+        try:
+            o, end = dec.raw_decode(raw, a)
+        except ValueError:
+            pos = a + 1
+            continue
+        seen_json = True
+        pos = end
+        v = str(o.get("verdict", "")).strip().upper() if isinstance(o, dict) else ""
+        if v in ("ALLOW", "VETO"):               # "ALLOW|VETO" (the echoed template) is not a verdict
+            found.append((v, str(o.get("reason", ""))[:300]))
+    if found:
+        return found[-1]                         # the model's final answer
+    return "ERROR", "verdict missing or not ALLOW/VETO" if seen_json else "no JSON in reply"
 
 
 def build_context(action: str, decision, df, atr_val: float, sl_atr: float, tp_atr: float, htf: str = "",

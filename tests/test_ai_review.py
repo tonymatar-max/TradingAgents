@@ -28,6 +28,13 @@ class TestParse(unittest.TestCase):
         self.assertEqual(parse_verdict('{"verdict":"VETO","reason":"exhausted"}'), ("VETO", "exhausted"))
         self.assertEqual(parse_verdict('```json\n{"verdict":"allow","reason":""}\n```')[0], "ALLOW")
 
+    def test_thinking_aloud_models(self):
+        """Seen live: a free model echoed the template, then answered. The echoed 'ALLOW|VETO' must not count; the last real verdict wins."""
+        echo = 'I must reply as {"verdict":"ALLOW|VETO","reason":"one short sentence"}. Looking at the data... '
+        self.assertEqual(parse_verdict(echo)[0], "ERROR")                                   # echo only (e.g. cut off) = fail open
+        self.assertEqual(parse_verdict(echo + '{"verdict":"VETO","reason":"exhausted"}'), ("VETO", "exhausted"))
+        self.assertEqual(parse_verdict('{"verdict":"VETO","reason":"a"} on reflection {"verdict":"ALLOW","reason":"b"}'), ("ALLOW", "b"))
+
     def test_garbage_is_error_not_veto(self):
         for bad in ("", "I think we should not trade", "{broken", '{"verdict":"MAYBE"}', '{"reason":"x"}', None, 5):
             self.assertEqual(parse_verdict(bad)[0], "ERROR", bad)
