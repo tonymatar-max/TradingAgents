@@ -21,6 +21,7 @@ PowerShell task scripts in `scripts/`, tests in `tests/` (run: `python -m unitte
 - `htf.py` higher-timeframe confluence (no look-ahead: a candle is usable only after it closed). `optimize.py`, `tfscan.py`, `agent_stats.py`, `parity.py`.
 - `mt5_bot.py` live/dry-run bot (paper positions in dry run, portal settings, stale-candle guard with broker-clock offset).
 - `portal.py` + `portal.html` local web page; edit panel (lots, risk, cap, pause, votes 7-10, stop/target ATR) behind an edit password.
+- `ai_review.py` + `ai_report.py` optional AI veto-only second opinion (`--ai-review shadow|veto`, key in env AI_REVIEW_API_KEY, fails open, logs `ai_review` events; `aireport` compares allowed vs vetoed paper trades). Shadow first; never backtest it (training-data leakage). Tests: `tests/test_ai_review.py`.
 - `news.py` news blackout (unofficial community feed, fails closed) + daily brief. `mt5_export.py` chunked candle export.
 - `mt5/XAUUSD_Consensus_EA.mq5` MQL5 port. The owner compiled it and ran it in the MT5 Strategy Tester (real ticks, 2026-01..10, 9/10, H4 filter 7, 0.3 lots: 129 trades, PF 1.44, +$33.9k on $5k; see `reports` notes below). `tests/mql_mirror.py` proves its algorithms equal the Python agents.
 - `tester_report.py` + `reportcheck` command: parse an MT5 tester report (`ReportTester-*.html`, UTF-16) and compare it trade by trade with the Python backtest (`--tester-report FILE --csv XAUUSD_H1_long.csv`).

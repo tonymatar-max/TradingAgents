@@ -35,13 +35,14 @@ class Mt5Bot:
     def __init__(self, mt5, symbol="XAUUSD", timeframe="H1", committee=None, risk_pct=0.01,
                  sl_atr=1.5, tp_atr=3.0, max_daily_loss_pct=0.03, magic=26001, dry_run=True,
                  bars=500, deviation=30, news=None, htf_min=0, htf_tf="H4", htf_agents=None, fixed_lots=None, max_risk_pct=0.10,
-                 server_utc_offset_hours=None, clock=time.time, logdir=None, describe=None):
+                 server_utc_offset_hours=None, clock=time.time, logdir=None, describe=None, ai_review=None):
         self.mt5, self.symbol, self.dry_run = mt5, symbol, dry_run
         self.tf = getattr(mt5, f"TIMEFRAME_{timeframe}")
         self.committee = committee or Committee()
         self.risk_pct, self.sl_atr, self.tp_atr = risk_pct, sl_atr, tp_atr
         self.max_daily_loss_pct, self.magic, self.bars, self.deviation = max_daily_loss_pct, magic, bars, deviation
         self.last_bar, self.news = None, news
+        self.ai_review = ai_review              # optional AiReviewer: shadow (log only) or veto-only; fails open
         self.htf_min, self.htf_tf, self.htf_agents = htf_min, htf_tf, htf_agents
         self.fixed_lots, self.max_risk_pct = fixed_lots, max_risk_pct
         self.describe = describe or {}
@@ -233,7 +234,29 @@ class Mt5Bot:
                 return f"{d.action} signal ignored: {why}"
         if self.daily_loss_hit():
             return f"{d.action} signal ignored: daily loss limit reached"
-        return self.place(d.action, ind.atr(df).iloc[-1])
+        atr_val = ind.atr(df).iloc[-1]
+        if self.ai_review is not None:
+            blocked, why = self._ai_review(d, df, atr_val)
+            if blocked:
+                return f"{d.action} signal ignored: AI review vetoed: {why}"
+        return self.place(d.action, atr_val)
+
+    def _ai_review(self, d, df, atr_val):
+        """Last gate before an order: every other check has passed. Logs every opinion; blocks only in veto mode.
+        Never raises (a failure of the reviewer must not stop the bot) and ERROR never blocks."""
+        try:
+            from .ai_review import build_context
+            ctx = build_context(d.action, d, df, atr_val, self.sl_atr, self.tp_atr,
+                                htf=f"{self.htf_tf} confirms (>= {self.htf_min} agents)" if self.htf_min else "")
+            r = self.ai_review.review(ctx)
+        except Exception as e:  # noqa: BLE001
+            log.warning("AI review failed (ignored): %s", e)
+            return False, ""
+        log.info("AI review (%s): %s - %s [%s, %d ms]", r.mode, r.verdict, r.reason, r.model, r.latency_ms)
+        if self.events:
+            self.events.append(type="ai_review", bar=str(self.last_bar), action=d.action, verdict=r.verdict,
+                               reason=r.reason, model=r.model, latency_ms=r.latency_ms, mode=r.mode, blocked=r.blocks)
+        return r.blocks, r.reason
 
     def place(self, action, atr_val) -> str:
         m, info = self.mt5, self.mt5.symbol_info(self.symbol)

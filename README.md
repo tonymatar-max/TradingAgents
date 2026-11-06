@@ -162,3 +162,13 @@ python -m xauusd_agents agentstats --csv XAUUSD_H1_long.csv --from 2022-01-01 --
 python -m xauusd_agents reportcheck --tester-report "C:\Users\you\OneDrive\Desktop\ReportTester-123.html" --csv XAUUSD_H1_long.csv --spread 0.30
 ```
 Reads the EA's inputs, period, deposit and leverage from the report, runs the Python backtest with the same settings, and prints both result sets plus how many trades start on the same candle in the same direction.
+
+## AI review (optional, demo / dry-run research)
+A language-model second opinion before an entry. It is **veto-only** (it can block a trade, never open one or change size/stop/target) and **fails open** (gateway down or unparseable reply = the rule-based decision stands). It only sees prices, votes and the planned stop distance: no balance, equity or lots.
+```
+# any OpenAI-compatible endpoint, e.g. a local FreeLLMAPI gateway; the key comes from the environment, never the command line
+$env:AI_REVIEW_API_KEY = "..."
+$a = @("mt5","--symbol","XAUUSD","--ai-review","shadow","--ai-url","http://localhost:3001/v1","--ai-model","auto"); python -m xauusd_agents @a
+python -m xauusd_agents aireport --logdir logs      # allowed vs vetoed paper trades: win rate, average R
+```
+Start with `shadow` (asks and logs, never blocks) in dry-run for several weeks; move to `veto` only if vetoed trades are clearly worse than allowed ones over a meaningful sample (30+ trades). Do not backtest it: the model has seen historical gold prices and news in training, so any past-date result is contaminated.

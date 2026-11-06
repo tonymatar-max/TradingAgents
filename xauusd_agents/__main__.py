@@ -12,7 +12,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal", "agentstats", "parity", "reportcheck"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal", "agentstats", "parity", "reportcheck", "aireport"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -33,6 +33,10 @@ def main():
     p.add_argument("--news", action="store_true", help="mt5: block new trades around high-impact USD news")
     p.add_argument("--news-before", type=int, default=30, help="minutes before an event")
     p.add_argument("--news-after", type=int, default=30, help="minutes after an event")
+    p.add_argument("--ai-review", choices=["off", "shadow", "veto"], default="off",
+                   help="mt5: AI second opinion before an entry. shadow = log only (start here), veto = a VETO blocks the trade. Fails open. Key from env AI_REVIEW_API_KEY")
+    p.add_argument("--ai-url", default="http://localhost:3001/v1", help="OpenAI-compatible base URL for --ai-review")
+    p.add_argument("--ai-model", default="auto", help="model id for --ai-review")
     p.add_argument("--magic", type=int, default=26001, help="mt5: order tag; use a different one per bot when running several")
     p.add_argument("--tfs", default="M15,M30,H1,H4", help="tfscan: comma list of timeframes")
     p.add_argument("--htf-min", type=int, default=0, help="require >= N of 10 agents on the higher timeframe to agree (0 = off)")
@@ -201,6 +205,10 @@ def main():
         serve(a.logdir, a.host, a.port, a.token)
         return
 
+    if a.cmd == "aireport":
+        from .ai_report import report
+        print(report(a.logdir))
+        return
     if a.cmd == "newsbrief":
         from .news import NewsFilter, brief
         text = brief(NewsFilter(a.news_before, a.news_after))
@@ -245,11 +253,15 @@ def main():
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", handlers=handlers)
         from .news import NewsFilter
         news = NewsFilter(a.news_before, a.news_after) if a.news else None
-        Mt5Bot(mt5, a.symbol, a.timeframe, make_com(), news=news, risk_pct=a.risk,
+        reviewer = None
+        if a.ai_review != "off":
+            from .ai_review import AiReviewer
+            reviewer = AiReviewer(a.ai_url, a.ai_model, a.ai_review)
+        Mt5Bot(mt5, a.symbol, a.timeframe, make_com(), news=news, ai_review=reviewer, risk_pct=a.risk,
                sl_atr=a.sl_atr, tp_atr=a.tp_atr, magic=a.magic,
                htf_min=a.htf_min, htf_tf=a.htf_tf, server_utc_offset_hours=a.server_utc_offset, logdir=a.logdir,
                describe={"timeframe": a.timeframe, "threshold": a.threshold, "sl_atr": a.sl_atr, "tp_atr": a.tp_atr,
-                         "htf_min": a.htf_min, "news": bool(a.news), "lots": a.lots, "risk": a.risk, "magic": a.magic},
+                         "htf_min": a.htf_min, "news": bool(a.news), "ai_review": a.ai_review, "lots": a.lots, "risk": a.risk, "magic": a.magic},
                fixed_lots=a.lots, max_risk_pct=0.10 if a.max_risk is None else a.max_risk, dry_run=not a.live_orders).run()
         return
 
