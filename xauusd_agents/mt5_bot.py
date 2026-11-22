@@ -93,7 +93,40 @@ class Mt5Bot:
             raise RuntimeError("Not enough candles from MT5 (need >= 250 for EMA200 etc.)")
         df = pd.DataFrame(rates)
         df.index = pd.to_datetime(df["time"], unit="s")
-        return df[["open", "high", "low", "close"]].iloc[:-1]  # drop the still-forming candle
+        self._df = df[["open", "high", "low", "close"]].iloc[:-1]
+        return self._df  # the still-forming candle is dropped
+
+    def _snapshot(self):
+        """Give the portal's "Check now" button what the bot sees: current bid/ask every cycle, and the closed-candle
+        windows (main + higher timeframe) when a new candle has closed. Never raises: the portal is optional."""
+        if not self.events:
+            return
+        try:
+            import json
+            tick = self.mt5.symbol_info_tick(self.symbol)
+            tmp = os.path.join(self._logdir, "live_price.json.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"ts": time.time(), "bid": float(tick.bid), "ask": float(tick.ask), "tick_time": int(tick.time),
+                           "last_bar": str(self.last_bar)}, f)
+            os.replace(tmp, os.path.join(self._logdir, "live_price.json"))
+            df = getattr(self, "_df", None)
+            if df is None or len(df) < 250 or getattr(self, "_snap_bar", None) == df.index[-1]:
+                return
+            self._snap_bar = df.index[-1]
+            self._write_window(df, "live_candles.csv")
+            if self.htf_min:
+                rates = self.mt5.copy_rates_from_pos(self.symbol, getattr(self.mt5, f"TIMEFRAME_{self.htf_tf}"), 0, self.bars)
+                if rates is not None and len(rates) >= 250:
+                    h = pd.DataFrame(rates)
+                    h.index = pd.to_datetime(h["time"], unit="s")
+                    self._write_window(h[["open", "high", "low", "close"]].iloc[:-1], "live_htf.csv")
+        except Exception:  # noqa: BLE001
+            log.debug("could not write live snapshot", exc_info=True)
+
+    def _write_window(self, df, name):
+        tmp = os.path.join(self._logdir, name + ".tmp")
+        df.rename_axis("time").to_csv(tmp)
+        os.replace(tmp, os.path.join(self._logdir, name))
 
     # ---- risk --------------------------------------------------------------
     def has_position(self) -> bool:
@@ -181,6 +214,7 @@ class Mt5Bot:
             else:
                 self.events.append(type="skip", bar=str(self.last_bar), status=status)
         self._status(status)
+        self._snapshot()
         return status
 
     def _step(self) -> str:

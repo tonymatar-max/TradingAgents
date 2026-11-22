@@ -28,8 +28,11 @@ class CheckError(ValueError):
 
 
 class EntryChecker:
-    def __init__(self, csv_path=None, htf_csv=None, htf_tf="H4", reviewer=None, votes=9, htf_min=0, sl_atr=1.5, tp_atr=3.0):
+    def __init__(self, csv_path=None, htf_csv=None, htf_tf="H4", reviewer=None, votes=9, htf_min=0, sl_atr=1.5, tp_atr=3.0,
+                 logdir="logs", news=None, agents=None):
         self.csv_path, self.htf_csv, self.htf_tf, self.reviewer = csv_path, htf_csv, htf_tf, reviewer
+        self.agents = agents                       # None = the 10 validated agents (tests inject fixed votes)
+        self.logdir, self.news = logdir, news     # logdir: where the running bot saves its live snapshot
         self.defaults = {"votes": votes, "htf_min": htf_min, "sl_atr": sl_atr, "tp_atr": tp_atr}
         self._cache = {}
 
@@ -45,7 +48,8 @@ class EntryChecker:
 
     def caps(self) -> dict:
         """What the portal page may offer (cheap; no heavy work)."""
-        out = {"csv": False, "ai": self.reviewer is not None, "defaults": self.defaults}
+        out = {"csv": False, "ai": self.reviewer is not None, "defaults": self.defaults,
+               "live": os.path.exists(os.path.join(self.logdir, "live_price.json"))}
         if self.csv_path and os.path.exists(self.csv_path):
             try:
                 df = self._load(self.csv_path)
@@ -78,7 +82,7 @@ class EntryChecker:
         bar = upto.index[-1]
         df = upto.tail(WINDOW)
 
-        agents = default_agents()
+        agents = self.agents or default_agents()
         n = len(agents)
         com = Committee(agents)
         com.required = max(1, min(votes, n))
@@ -115,6 +119,77 @@ class EntryChecker:
             res["ai"] = {"verdict": "SKIPPED", "reason": "no trade proposed on this candle, so there is nothing to review"}
         return res
 
+    # ---- check right now ---------------------------------------------------
+    def check_now(self, votes=None, htf_min=None, sl_atr=None, tp_atr=None, use_ai=False, status=None) -> dict:
+        """The bot's decision on the latest CLOSED candle, plus the current price: same votes, same higher-timeframe
+        confirmation, same news blackout, same ATR stop and target. Reads what the running bot saved in logs/.
+        `status` is the bot's status.json (pause / open paper position are reported, not enforced)."""
+        import json
+        import time
+        from .htf import last_closed_direction
+        price_p = os.path.join(self.logdir, "live_price.json")
+        cand_p = os.path.join(self.logdir, "live_candles.csv")
+        if not (os.path.exists(price_p) and os.path.exists(cand_p)):
+            raise CheckError("No live data yet. The bot writes it every cycle: restart the bot with this version and wait ~15 s.")
+        with open(price_p, encoding="utf-8") as f:
+            px = json.load(f)
+        age = time.time() - float(px["ts"])
+        if age > 180:
+            raise CheckError(f"The bot's live data is {age / 60:.0f} min old: the bot is not running.")
+        votes = int(votes or self.defaults["votes"])
+        htf_min = int(self.defaults["htf_min"] if htf_min is None else htf_min)
+        sl_atr = float(sl_atr or self.defaults["sl_atr"])
+        tp_atr = float(tp_atr or self.defaults["tp_atr"])
+        df = self._load(cand_p).tail(WINDOW)
+        if len(df) < MIN_BARS:
+            raise CheckError(f"Only {len(df)} live candles saved so far (need {MIN_BARS}).")
+        agents = self.agents or default_agents()
+        com = Committee(agents)
+        com.required = max(1, min(votes, len(agents)))
+        com.threshold = com.required / len(agents)
+        d = com.decide(df)
+        atr_val = float(ind.atr(df).iloc[-1])
+        close = float(df["close"].iloc[-1])
+        bid, ask = float(px["bid"]), float(px["ask"])
+        delta = bar_delta(df.index)
+        res = {"live": True, "bar": str(df.index[-1]), "bar_closes": str(df.index[-1] + delta), "close": round(close, 2),
+               "price": {"bid": bid, "ask": ask, "spread": round(ask - bid, 2), "age_s": round(age)},
+               "settings": {"votes": com.required, "of": len(agents), "htf_min": htf_min, "sl_atr": sl_atr, "tp_atr": tp_atr},
+               "committee": {"action": d.action, "buy": d.buy, "sell": d.sell, "neutral": d.neutral, "need": d.required},
+               "agents": [{"name": k, "vote": int(v)} for k, v in d.votes.items()], "atr": round(atr_val, 2)}
+        blocked, htf_txt, notes = None, "", []
+        if d.action != "HOLD" and htf_min:
+            hp = os.path.join(self.logdir, "live_htf.csv")
+            direction = last_closed_direction(self._load(hp).tail(WINDOW), htf_min) if os.path.exists(hp) else 0
+            want = 1 if d.action == "BUY" else -1
+            res["htf"] = {"tf": self.htf_tf, "needs": htf_min, "direction": direction, "confirms": direction == want}
+            htf_txt = f"{self.htf_tf} confirms (>= {htf_min} agents)"
+            if direction != want:
+                blocked = f"{self.htf_tf} does not confirm ({direction:+d})"
+        if d.action != "HOLD" and self.news is not None:
+            nb, why = self.news.blocked()
+            if nb:
+                blocked = blocked or why
+        st = status or {}
+        if d.action != "HOLD":
+            if (st.get("settings") or {}).get("paused"):
+                notes.append("the bot is paused from the portal: it would not open this")
+            if st.get("paper_open"):
+                notes.append("a paper position is already open: the bot would ignore this signal")
+        res["notes"] = notes
+        res["entry"] = ("NO ENTRY NOW: committee says HOLD" if d.action == "HOLD"
+                        else f"NO ENTRY NOW: {d.action} signal blocked, {blocked}" if blocked else f"ENTRY OK NOW: {d.action}")
+        if d.action != "HOLD" and not blocked:
+            sign, p = (1, ask) if d.action == "BUY" else (-1, bid)
+            res["plan"] = {"approx_entry": round(p, 2), "stop": round(p - sign * sl_atr * atr_val, 2),
+                           "target": round(p + sign * tp_atr * atr_val, 2),
+                           "note": "from the current price; the bot decides once per closed candle"}
+            if use_ai:
+                res["ai"] = self._ai(d, df, atr_val, sl_atr, tp_atr, htf_txt, live=True)
+        elif use_ai:
+            res["ai"] = {"verdict": "SKIPPED", "reason": "no trade is proposed right now, so there is nothing to review"}
+        return res
+
     def _htf_direction(self, upto, bar, delta, htf_min) -> int:
         if self.htf_csv and os.path.exists(self.htf_csv):
             h = self._load(self.htf_csv)
@@ -145,8 +220,10 @@ class EntryChecker:
         return {"result": "still open", "entry": round(entry, 2), "stop": round(sl, 2), "target": round(tp, 2),
                 "why": f"neither level was touched in the next {len(nxt)} candles"}
 
-    def _ai(self, d, df, atr_val, sl_atr, tp_atr, htf_txt) -> dict:
+    def _ai(self, d, df, atr_val, sl_atr, tp_atr, htf_txt, live=False) -> dict:
         from .ai_review import build_context
         r = self.reviewer.review(build_context(d.action, d, df, atr_val, sl_atr, tp_atr, htf=htf_txt))
-        return {"verdict": r.verdict, "reason": r.reason, "model": r.model, "latency_ms": r.latency_ms,
-                "warning": "This is a past candle: the model may remember what happened, so its opinion here is not evidence."}
+        out = {"verdict": r.verdict, "reason": r.reason, "model": r.model, "latency_ms": r.latency_ms}
+        if not live:
+            out["warning"] = "This is a past candle: the model may remember what happened, so its opinion here is not evidence."
+        return out

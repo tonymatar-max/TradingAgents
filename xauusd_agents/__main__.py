@@ -37,6 +37,10 @@ def main():
                    help="mt5: AI second opinion before an entry. shadow = log only (start here), veto = a VETO blocks the trade. Fails open. Key from env AI_REVIEW_API_KEY")
     p.add_argument("--ai-url", default="http://localhost:3001/v1", help="OpenAI-compatible base URL for --ai-review")
     p.add_argument("--ai-model", default="auto", help="model id for --ai-review")
+    p.add_argument("--ai-panel", default="", help="mt5: e.g. claude,grok = ask BOTH models; with --ai-review veto a trade needs ALLOW from all "
+                   "(an API error also blocks). Keys from env ANTHROPIC_API_KEY and XAI_API_KEY")
+    p.add_argument("--claude-model", default="claude-opus-5-5", help="model id for the Claude panel member")
+    p.add_argument("--grok-model", default="grok-4", help="model id for the Grok panel member")
     p.add_argument("--magic", type=int, default=26001, help="mt5: order tag; use a different one per bot when running several")
     p.add_argument("--tfs", default="M15,M30,H1,H4", help="tfscan: comma list of timeframes")
     p.add_argument("--htf-min", type=int, default=0, help="require >= N of 10 agents on the higher timeframe to agree (0 = off)")
@@ -202,16 +206,17 @@ def main():
 
     if a.cmd == "portal":
         from .portal import serve
-        checker = None
-        if a.csv:
-            import math
-            from .entry_check import EntryChecker
-            reviewer = None
-            if a.ai_review != "off":
-                from .ai_review import AiReviewer
-                reviewer = AiReviewer(a.ai_url, a.ai_model, "shadow")
-            checker = EntryChecker(a.csv, a.htf_csv, a.htf_tf, reviewer, votes=math.ceil(round(a.threshold * 10, 9)),
-                                   htf_min=a.htf_min, sl_atr=a.sl_atr, tp_atr=a.tp_atr)
+        import math
+        from .entry_check import EntryChecker
+        from .news import NewsFilter
+        reviewer = None
+        if a.ai_review != "off":
+            from .ai_review import AiReviewer
+            reviewer = AiReviewer(a.ai_url, a.ai_model, "shadow")
+        # --csv is only needed for "check a past candle"; "Check now" reads the running bot's snapshot in --logdir
+        checker = EntryChecker(a.csv, a.htf_csv, a.htf_tf, reviewer, votes=math.ceil(round(a.threshold * 10, 9)),
+                               htf_min=a.htf_min, sl_atr=a.sl_atr, tp_atr=a.tp_atr, logdir=a.logdir,
+                               news=NewsFilter(a.news_before, a.news_after))
         serve(a.logdir, a.host, a.port, a.token, checker=checker)
         return
 
@@ -264,7 +269,10 @@ def main():
         from .news import NewsFilter
         news = NewsFilter(a.news_before, a.news_after) if a.news else None
         reviewer = None
-        if a.ai_review != "off":
+        if a.ai_review != "off" and a.ai_panel:
+            from .ai_panel import build_panel
+            reviewer = build_panel(a.ai_panel, a.ai_review, a.claude_model, a.grok_model)
+        elif a.ai_review != "off":
             from .ai_review import AiReviewer
             reviewer = AiReviewer(a.ai_url, a.ai_model, a.ai_review)
         Mt5Bot(mt5, a.symbol, a.timeframe, make_com(), news=news, ai_review=reviewer, risk_pct=a.risk,

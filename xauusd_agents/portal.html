@@ -86,8 +86,15 @@
     <span id="mode" class="pill"></span>
     <span class="spacer"></span>
     <span id="upd" class="muted"></span>
+    <button type="button" class="primary" id="now-go" title="Run the committee and the AI on the current price. Never trades.">Check now</button>
     <button id="theme" type="button" aria-label="Toggle light or dark theme">Theme</button>
   </header>
+
+  <section class="card" id="now-card" style="margin-bottom:12px;display:none" aria-labelledby="h-now">
+    <h2 id="h-now">Check now (current price, same rules as the bot; never trades)</h2>
+    <div id="now-msg" class="msg" role="status" aria-live="polite"></div>
+    <div id="now-out" aria-live="polite"></div>
+  </section>
 
   <div class="grid kpis" id="kpis"></div>
 
@@ -220,6 +227,20 @@ $("theme").onclick = () => {
   try { localStorage.setItem("theme", next); } catch (e) {}
 };
 
+// Did the AI reviewer approve the committee's decision on this candle?
+function aiLine(d, s) {
+  const mode = (((s.status || {}).settings || {}).ai_review) || "off";
+  const a = (s.ai || {})[d.bar];
+  if (a) {
+    const ok = a.verdict === "ALLOW", veto = a.verdict === "VETO";
+    const word = ok ? "APPROVED (ALLOW)" : veto ? (a.mode === "veto" ? "REJECTED (VETO, entry blocked)" : "WOULD REJECT (VETO, shadow mode: not blocking)") : "no opinion (" + esc(a.reason || "error") + ")";
+    return `<div class="preview ${veto ? "warn" : ""}" style="margin-top:8px"><b>AI reviewer: ${word}</b>${a.reason && (ok || veto) ? " - " + esc(a.reason) : ""}</div>`;
+  }
+  if (mode === "off") return `<div class="hint" style="margin-top:8px">AI reviewer: off (start the bot with --ai-review shadow to enable)</div>`;
+  if (d.action === "HOLD") return `<div class="hint" style="margin-top:8px">AI reviewer: not asked (the committee proposed no trade)</div>`;
+  return `<div class="hint" style="margin-top:8px">AI reviewer: not asked for this candle (the trade was stopped by another check before it, e.g. ${esc(d.status)})</div>`;
+}
+
 function kpi(label, value, c) { return `<div class="card kpi"><div class="v ${c || ""}">${value}</div><div class="l">${label}</div></div>`; }
 
 function render(s) {
@@ -261,7 +282,8 @@ function render(s) {
         <span>BUY <b>${d.buy}</b> · SELL <b>${d.sell}</b> · neutral <b>${d.neutral}</b> · need <b>${d.need}</b></span></div>
        <div class="muted" style="margin-top:4px">candle ${esc(d.bar)} (broker time)</div>
        <div class="chips">${chips}</div>
-       <div><b>Outcome:</b> ${esc(d.status)}</div>`;
+       <div><b>Outcome:</b> ${esc(d.status)}</div>
+       ${aiLine(d, s)}`;
   }
 
   // equity curve
@@ -411,10 +433,12 @@ function checkCaps(c) {
   if (on) { $("chk-time").min = c.first.slice(0, 16).replace(" ", "T"); $("chk-time").max = c.last.slice(0, 16).replace(" ", "T"); }
 }
 const CHK_V = { 1: "BUY", "-1": "SELL", 0: "neutral" };
-function renderCheck(r) {
+function renderCheck(r, target) {
   const act = r.committee.action, c = r.committee;
-  const head = r.entry.startsWith("WOULD") ? act : "HOLD";
-  let h = `<div class="tally"><span class="big ${head}-t">${esc(r.entry)}</span><span class="muted">candle opened ${esc(r.bar.slice(0, 16))}, closed ${esc(r.bar_closes.slice(0, 16))}</span></div>
+  const head = /^(WOULD|ENTRY OK)/.test(r.entry) ? act : "HOLD";
+  let h = `<div class="tally"><span class="big ${head}-t">${esc(r.entry)}</span><span class="muted">${r.live ? "last closed candle" : "candle"} opened ${esc(r.bar.slice(0, 16))}, closed ${esc(r.bar_closes.slice(0, 16))}</span></div>
+    ${r.price ? `<div style="margin-top:4px">Price now: bid <b>${r.price.bid}</b> / ask <b>${r.price.ask}</b> <span class="hint">(spread ${r.price.spread}, ${r.price.age_s}s old)</span></div>` : ""}
+    ${(r.notes || []).map(n => `<div class="preview warn" style="margin-top:6px">${esc(n)}</div>`).join("")}
     <div class="tally" style="margin-top:4px"><span>BUY <b>${c.buy}</b></span><span>SELL <b>${c.sell}</b></span><span>neutral <b>${c.neutral}</b></span><span class="muted">need ${c.need} of ${r.settings.of}</span><span class="muted">close ${r.close}, ATR ${r.atr}</span></div>
     <div class="chips">${r.agents.map(a => `<div class="chip ${a.vote === 1 ? "BUY" : a.vote === -1 ? "SELL" : ""}"><span>${esc(short(a.name))}</span><b>${CHK_V[a.vote]}</b></div>`).join("")}</div>`;
   if (r.htf) h += `<div class="hint">${esc(r.htf.tf)}: ${r.htf.confirms ? "confirms" : "does not confirm"} (needs ${r.htf.needs} agents, direction ${r.htf.direction > 0 ? "BUY" : r.htf.direction < 0 ? "SELL" : "none"})</div>`;
@@ -428,8 +452,27 @@ function renderCheck(r) {
     h += `<div class="preview ${a.verdict === "VETO" ? "warn" : ""}" style="margin-top:8px"><b>AI reviewer: ${esc(a.verdict)}</b>${a.reason ? " - " + esc(a.reason) : ""}
       <div class="hint">${a.model ? esc(a.model) + ", " + a.latency_ms + " ms. " : ""}${esc(a.warning || "")}</div></div>`;
   }
-  $("chk-out").innerHTML = h;
+  $(target || "chk-out").innerHTML = h;
 }
+$("now-go").onclick = async () => {
+  const card = $("now-card"), m = $("now-msg"), b = $("now-go");
+  const say3 = (x, ok) => { m.textContent = x; m.className = "msg " + (ok ? "ok" : "err"); };
+  let pwd = ""; try { pwd = sessionStorage.getItem("editpwd") || ""; } catch (e) {}
+  if (!pwd) { pwd = prompt("Edit password (from logs\\portal_token.txt):") || ""; if (!pwd) return; }
+  const ai = !!(last && last.check && last.check.ai);
+  card.style.display = ""; b.disabled = true; $("now-out").innerHTML = "";
+  say3(ai ? "Checking and asking the AI (up to ~30 s)..." : "Checking...", true);
+  try {
+    const r = await fetch("api/checknow" + qs, { method: "POST", headers: { "Content-Type": "application/json", "X-Edit-Token": pwd }, body: JSON.stringify({ ai }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) { try { sessionStorage.removeItem("editpwd"); } catch (e) {} }
+    if (!r.ok) throw new Error(j.error || r.status);
+    try { sessionStorage.setItem("editpwd", pwd); } catch (e) {}
+    say3("Checked " + new Date().toLocaleTimeString() + (ai ? "" : " (AI is off: start the portal with --ai-review shadow)"), true);
+    renderCheck(j, "now-out");
+  } catch (e) { say3("Not checked: " + e.message, false); }
+  finally { b.disabled = false; }
+};
 $("chk-go").onclick = async () => {
   const t = $("chk-time").value, pwd = $("chk-pwd").value, m = $("chk-msg");
   const say2 = (x, ok) => { m.textContent = x; m.className = "msg " + (ok ? "ok" : "err"); };

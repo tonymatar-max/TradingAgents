@@ -90,7 +90,9 @@ def build_state(logdir: str) -> dict:
     trades = [e for e in ev if e.get("type") == "paper_close"]
     signals = [e for e in ev if e.get("type") == "signal"]
     start = (status or {}).get("paper_start_balance")
-    return {"server_time": time.time(), "status": status,
+    ai = {e["bar"]: {k: e.get(k) for k in ("verdict", "reason", "mode", "blocked", "model")}
+          for e in ev if e.get("type") == "ai_review" and e.get("bar")}      # opinion per candle, newest last
+    return {"server_time": time.time(), "status": status, "ai": dict(list(ai.items())[-40:]),
             "age_s": None if not status else round(time.time() - status["updated"]),
             "decisions": candles[-40:][::-1], "signals": signals[-15:][::-1],
             "paper": {"open": (status or {}).get("paper_open"), "trades": trades[-30:][::-1],
@@ -155,8 +157,8 @@ def make_handler(logdir: str, token: str | None, write_token: str | None = None,
             # 2) password
             if not hmac.compare_digest(self.headers.get("X-Edit-Token", ""), write_token):
                 return self._json(401, {"error": "wrong or missing edit password"})
-            if u.path == "/api/check":
-                return self._check()
+            if u.path in ("/api/check", "/api/checknow"):
+                return self._check(now=u.path == "/api/checknow")
             if u.path not in ("/api/settings", "/api/settings/reset"):
                 return self._json(404, {"error": "not found"})
             who = self.client_address[0]
@@ -177,8 +179,9 @@ def make_handler(logdir: str, token: str | None, write_token: str | None = None,
             return self._json(200, {"ok": True, "saved": clean,
                                     "note": "the bot applies it within ~15 seconds"})
 
-        def _check(self):
-            """Replay the committee (and optionally the AI reviewer) on a past candle. Read-only: never trades."""
+        def _check(self, now=False):
+            """Replay the committee (and optionally the AI reviewer) on a past candle, or on the bot's live snapshot
+            (now=True). Read-only: never trades."""
             from .entry_check import CheckError
             if checker is None:
                 return self._json(400, {"error": "Entry check is off. Start the portal with --csv FILE."})
@@ -197,9 +200,10 @@ def make_handler(logdir: str, token: str | None, write_token: str | None = None,
                 htf = _int_in(raw.get("htf_min"), 0, 10)
                 if htf is None:
                     htf = _int_in(st.get("htf_min"), 0, 10)
-                res = checker.check(str(raw.get("time", "")), votes=votes, htf_min=htf,
-                                    sl_atr=_num_in(st.get("sl_atr"), 0.5, 5), tp_atr=_num_in(st.get("tp_atr"), 0.5, 8),
-                                    use_ai=bool(raw.get("ai")) and checker.reviewer is not None)
+                kw = dict(votes=votes, htf_min=htf, sl_atr=_num_in(st.get("sl_atr"), 0.5, 5), tp_atr=_num_in(st.get("tp_atr"), 0.5, 8),
+                          use_ai=bool(raw.get("ai")) and checker.reviewer is not None)
+                res = (checker.check_now(status=build_state(logdir).get("status"), **kw) if now
+                       else checker.check(str(raw.get("time", "")), **kw))
             except CheckError as e:
                 return self._json(400, {"error": str(e)})
             except Exception as e:  # noqa: BLE001 - never crash the portal thread
@@ -228,8 +232,9 @@ def _num_in(v, lo, hi):
 def serve(logdir="logs", host="127.0.0.1", port=8765, token=None, checker=None):
     wt = edit_token(logdir, token)
     srv = ThreadingHTTPServer((host, port), make_handler(logdir, token, wt, loopback=host in ("127.0.0.1", "localhost"), checker=checker))
-    print("Entry check: " + ("on (%s%s)" % (checker.csv_path, ", AI on" if checker.reviewer else ", AI off") if checker else
-                             "off (start the portal with --csv FILE to enable the check button)"))
+    if checker:
+        print("Check now: on (%s). Past-candle check: %s" % ("AI on" if checker.reviewer else "AI off, start with --ai-review shadow",
+              checker.csv_path or "off (add --csv FILE)"))
     where = "http://%s:%d/" % ("127.0.0.1" if host in ("127.0.0.1", "0.0.0.0") else host, port)
     print(f"Portal running at {where}{'?token=...' if token else ''}  (reading {os.path.abspath(logdir)})  Ctrl+C to stop")
     print(f"Edit password (needed to change settings on the page): {wt}   [also in {os.path.join(logdir, 'portal_token.txt')}]")
