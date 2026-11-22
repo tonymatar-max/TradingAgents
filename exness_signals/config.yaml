@@ -1,0 +1,33 @@
+watchlist:
+- EURUSD
+- GBPUSD
+- USDJPY
+- XAUUSD
+- XAGUSD
+- USOIL
+- US500
+- USTEC
+- AAPL
+- NVDA
+timeframe: M15
+bars: 300
+strategy:
+  ema_fast: 20
+  ema_slow: 50
+  ema_trend: 200
+  rsi_period: 14
+  rsi_buy_max: 70
+  rsi_sell_min: 30
+  atr_period: 14
+  sl_atr: 1.5
+  tp_atr: 3.0
+alerts:
+  telegram: true
+  console: true
+execution:
+  enabled: true
+  demo_only: true
+  risk_per_trade_pct: 0.5
+  max_open_positions: 3
+  max_daily_loss_pct: 2.0
+  magic: 770001
