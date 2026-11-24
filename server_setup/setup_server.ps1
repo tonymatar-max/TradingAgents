@@ -12,7 +12,7 @@
 #
 # Before running: MetaTrader 5 installed, logged in to your Exness DEMO account, Algo Trading switched on.
 param(
-    [string]$InstallDir = "C:	radingagents",
+    [string]$InstallDir = "C:\tradingagents",
     [string]$RepoUrl    = "https://github.com/tonymatar-max/TradingAgents.git",
     [string]$Branch     = "feat/ai-panel-claude-grok",
     [switch]$LiveOrders,
