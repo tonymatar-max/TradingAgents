@@ -14,7 +14,8 @@
 param(
     [switch]$DryRun,
     [switch]$Uninstall,
-    [int]$PortalPort = 8780
+    [int]$PortalPort = 8780,
+    [string]$Python = ""     # full path to python.exe; default = the "python" on PATH
 )
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -29,7 +30,7 @@ if ($Uninstall) {
     return
 }
 
-$py = (Get-Command python -ErrorAction Stop).Source
+$py = if ($Python) { $Python } else { (Get-Command python -ErrorAction Stop).Source }
 & $py -c "import MetaTrader5, pandas, numpy" 2>$null
 if ($LASTEXITCODE -ne 0) { throw "python ($py) is missing MetaTrader5/pandas/numpy. Run: python -m pip install -r requirements.txt MetaTrader5" }
 
