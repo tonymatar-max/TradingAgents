@@ -48,6 +48,12 @@ canvas{display:block;width:100%}
 .ev:first-child{border-top:0}
 .muted{color:var(--muted)}
 #tip{position:fixed;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;display:none;z-index:5;box-shadow:0 4px 16px rgba(0,0,0,.15);max-width:280px}
+.orbgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.orbgrid .card h3{margin:0;font-size:15px;display:flex;justify-content:space-between;align-items:baseline}
+.state{font-size:12px;margin:2px 0 6px}
+table{border-collapse:collapse;width:100%;font-size:12px}
+td,th{padding:4px 6px;border-top:1px solid var(--line);text-align:left}
+th{color:var(--muted);font-weight:600;border-top:0}
 .warnbar{background:var(--sell-soft);border:1px solid var(--sell);color:var(--ink);padding:8px 12px;border-radius:8px;margin-bottom:12px;display:none}
 </style>
 </head>
@@ -60,7 +66,15 @@ canvas{display:block;width:100%}
 <div class="wrap">
   <div class="bots" id="bots"></div>
   <div class="warnbar" id="warn"></div>
-  <div class="grid">
+  <div id="orbView" style="display:none">
+    <div class="card" style="margin-bottom:14px">
+      <h2>ORB bot · opening-range breakout · New York session</h2>
+      <div id="orbSummary" class="muted"></div>
+    </div>
+    <div class="orbgrid" id="orbSyms"></div>
+    <div class="card" style="margin-top:14px"><h2>Paper results by day</h2><div id="orbHist" class="muted">-</div></div>
+  </div>
+  <div class="grid" id="committeeView">
     <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
       <div class="card">
         <h2 id="chartTitle">Price and committee signals</h2>
@@ -100,20 +114,77 @@ const short = n => n.replace(/^\d+_/, "").replace(/_/g, " ");
 const fmt = (x, d = 2) => x == null ? "-" : Number(x).toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d});
 const ago = s => s < 90 ? s + " s" : s < 5400 ? Math.round(s / 60) + " min" : s < 172800 ? Math.round(s / 3600) + " h" : Math.round(s / 86400) + " days";
 
+let orb = null;
 async function loadBots() {
   bots = await (await fetch("/api/bots")).json();
-  if (!bots.find(b => b.id === sel)) sel = bots.length ? (bots.find(b => b.running) || bots[0]).id : null;
+  try { const r = await fetch("/api/orb"); orb = r.ok ? await r.json() : null; } catch (e) { orb = null; }
+  if (sel !== "__orb" && !bots.find(b => b.id === sel)) sel = bots.length ? (bots.find(b => b.running) || bots[0]).id : null;
+  if (sel === "__orb" && !orb) sel = bots.length ? bots[0].id : null;
   $("bots").innerHTML = bots.map(b => `
     <button class="bot ${b.id === sel ? "sel" : ""}" data-id="${b.id}">
       <div class="sym"><span class="dot" style="background:${b.running ? "var(--buy)" : "var(--sell)"}"></span>${b.symbol} <span class="muted" style="font-weight:400;font-size:12px">${b.timeframe || ""} · ${b.id}</span></div>
       <div class="meta">${b.mode} · needs ${b.votes_needed}/10 · magic ${b.magic}</div>
       <div class="meta num">equity ${fmt(b.equity)} · ${b.running ? "updated " + ago(b.updated_age_s) + " ago" : "STOPPED (" + ago(b.updated_age_s) + ")"}</div>
-    </button>`).join("") || '<span class="muted">No bot log folders found (folders with a status.json).</span>';
+    </button>`).join("") + (orb ? `
+    <button class="bot ${sel === "__orb" ? "sel" : ""}" data-id="__orb">
+      <div class="sym"><span class="dot" style="background:${orb.running ? "var(--buy)" : "var(--sell)"}"></span>ORB <span class="muted" style="font-weight:400;font-size:12px">M5 · ${orb.symbols.length} symbols</span></div>
+      <div class="meta">${orb.mode} · magic ${orb.magic} · max loss $${orb.max_loss}/trade</div>
+      <div class="meta num">paper ${fmt(orb.history_total.usd)} USD · ${orb.running ? "updated " + ago(orb.updated_age_s) + " ago" : "STOPPED (" + ago(orb.updated_age_s) + ")"}</div>
+    </button>` : "") || '<span class="muted">No bot log folders found (folders with a status.json).</span>';
   document.querySelectorAll(".bot").forEach(el => el.onclick = () => { sel = el.dataset.id; try { localStorage.setItem("agents_portal_sel", sel); } catch (e) {} refresh(); });
+}
+
+function drawOrb() {
+  const o = orb;
+  $("warn").style.display = o.running ? "none" : "block";
+  $("warn").textContent = `The ORB bot has not updated for ${ago(o.updated_age_s)}: it is probably not running (task Svc-ORB).`;
+  const h = o.history_total;
+  $("orbSummary").innerHTML = `${o.mode} · New York time <b class="num">${o.ny_time}</b> · range 09:30-09:45, entries until 12:00, flat at 15:55 ·
+    target ${o.target_r}R · ${o.short ? "longs and shorts" : "longs only"}${o.note ? " · " + o.note : ""}<br>
+    Paper so far: <b class="num">${h.trades}</b> trades over ${h.days} days, ${h.wins} won, <b class="num" style="color:${h.R >= 0 ? "var(--buy)" : "var(--sell)"}">${fmt(h.R)}R = ${fmt(h.usd)} USD</b>
+    <span class="muted">(at $${o.max_loss} risk per trade; dry run, nothing is sent)</span>`;
+  $("orbSyms").innerHTML = o.symbols.map((s, i) => {
+    const t = s.trade, col = t ? (t.R >= 0 ? "var(--buy)" : "var(--sell)") : "var(--muted)";
+    return `<div class="card"><h3>${s.symbol}<span class="num" style="font-size:13px;color:${col}">${t ? (t.R >= 0 ? "+" : "") + fmt(t.R) + "R · " + fmt(t.usd) + " $" : ""}</span></h3>
+      <div class="state" style="color:${t ? col : "var(--muted)"}">${s.state || ""}${t ? ` · ${t.side} ${t.entry_time} @ ${fmt(t.entry)} → ${t.open ? "now " + fmt(t.exit) : t.reason + " " + t.exit_time + " @ " + fmt(t.exit)}` : ""}</div>
+      <canvas id="orbc${i}" data-h="140" height="140"></canvas></div>`;
+  }).join("");
+  o.symbols.forEach((s, i) => drawOrbChart($("orbc" + i), s));
+  const hist = (o.history || []).slice().reverse();
+  $("orbHist").innerHTML = hist.length ? `<table><tr><th>Date</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>Result</th></tr>` +
+    hist.map(r => `<tr><td class="num">${r.date}</td><td>${r.symbol}</td><td>${r.side}</td><td class="num">${r.entry_time} @ ${fmt(r.entry)}</td>
+      <td class="num">${r.reason} ${r.exit_time} @ ${fmt(r.exit)}</td><td class="num" style="color:${r.R >= 0 ? "var(--buy)" : "var(--sell)"}">${fmt(r.R)}R · ${fmt(r.usd)} $</td></tr>`).join("") + "</table>"
+    : "No finished days recorded yet. Each symbol's paper result is saved at 15:55 New York time.";
+}
+
+function drawOrbChart(cv, s) {
+  const [g, w, h] = setup(cv), b = s.bars || []; if (!b.length) { g.fillStyle = css("--muted"); g.fillText("no bars today", 10, 20); return; }
+  const t = s.trade, vals = b.flatMap(k => [k.h, k.l]).concat(t ? [t.target, t.stop] : []);
+  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = (hi - lo) * 0.06 || 1; lo -= pad; hi += pad;
+  const y = v => 6 + (hi - v) / (hi - lo) * (h - 22), x = i => 4 + (i + 0.5) * (w - 8) / b.length, bw = Math.max(1, (w - 8) / b.length * 0.65);
+  if (s.range_high != null) {
+    const i0 = b.findIndex(k => k.t >= "09:30"), i1 = b.findIndex(k => k.t >= "09:45");
+    g.fillStyle = css("--neu-soft"); g.fillRect(4, y(s.range_high), w - 8, y(s.range_low) - y(s.range_high));
+    if (i0 >= 0) { g.fillStyle = css("--neu"); g.globalAlpha = .35; g.fillRect(x(i0) - bw, y(s.range_high), x(i1 >= 0 ? i1 : b.length) - x(i0), y(s.range_low) - y(s.range_high)); g.globalAlpha = 1; }
+  }
+  b.forEach((k, i) => { const c = k.c >= k.o ? css("--buy") : css("--sell"); g.strokeStyle = c; g.fillStyle = c;
+    g.beginPath(); g.moveTo(x(i), y(k.h)); g.lineTo(x(i), y(k.l)); g.stroke();
+    g.fillRect(x(i) - bw / 2, y(Math.max(k.o, k.c)), bw, Math.max(1, Math.abs(y(k.o) - y(k.c)))); });
+  if (t) {
+    const i0 = Math.max(0, b.findIndex(k => k.t >= t.entry_time));
+    [[t.entry, "--accent", "entry"], [t.stop, "--sell", "stop"], [t.target, "--buy", "target"]].forEach(([v, c, lab]) => {
+      g.strokeStyle = css(c); g.setLineDash(lab === "entry" ? [] : [4, 3]); g.beginPath(); g.moveTo(x(i0), y(v)); g.lineTo(w - 4, y(v)); g.stroke();
+      g.setLineDash([]); g.fillStyle = css(c); g.textAlign = "right"; g.fillText(lab, w - 6, y(v) - 3); });
+  }
+  g.fillStyle = css("--muted"); g.textAlign = "left"; g.fillText(b[0].t, 4, h - 3); g.textAlign = "right"; g.fillText(b[b.length - 1].t + " NY", w - 4, h - 3);
 }
 
 async function loadBot() {
   if (!sel) return;
+  const isOrb = sel === "__orb";
+  $("orbView").style.display = isOrb ? "block" : "none";
+  $("committeeView").style.display = isOrb ? "none" : "grid";
+  if (isOrb) { drawOrb(); return; }
   const r = await fetch("/api/bot?id=" + encodeURIComponent(sel));
   data = await r.json();
   if (data.error) { $("warn").style.display = "block"; $("warn").textContent = data.error; return; }

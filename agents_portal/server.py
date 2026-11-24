@@ -103,6 +103,23 @@ def bot_detail(root: str, name: str, bars: int = 150) -> dict:
     return out
 
 
+def orb_detail(root: str) -> dict | None:
+    """The ORB bot's own status file (orb_bot/logs/status_orb.json) plus its daily paper results."""
+    d = os.path.join(root, "orb_bot", "logs")
+    st = _read_json(os.path.join(d, "status_orb.json"))
+    if st is None:
+        return None
+    age = time.time() - float(st.get("updated", 0) or 0)
+    st["updated_age_s"], st["running"] = round(age), age < 300      # it writes every ~20 s
+    hist = read_events(os.path.join(d, "orb_paper.jsonl"), limit=2000)
+    st["history"] = hist[-200:]
+    st["history_total"] = {"days": len({h.get("date") for h in hist}), "trades": len(hist),
+                           "wins": sum(1 for h in hist if (h.get("R") or 0) > 0),
+                           "R": round(sum(h.get("R") or 0 for h in hist), 2),
+                           "usd": round(sum(h.get("usd") or 0 for h in hist), 2)}
+    return st
+
+
 class Handler(BaseHTTPRequestHandler):
     root = "."
 
@@ -125,6 +142,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, f.read(), "text/html; charset=utf-8")
             if u.path == "/api/bots":
                 data = [bot_summary(self.root, n) for n in find_bots(self.root)]
+            elif u.path == "/api/orb":
+                data = orb_detail(self.root)
+                if data is None:
+                    return self._send(404, b'{"error":"no ORB status yet (orb_bot/logs/status_orb.json)"}', "application/json")
             elif u.path == "/api/bot":
                 name = q.get("id", [""])[0]
                 if name not in find_bots(self.root):      # only known folders: no path tricks

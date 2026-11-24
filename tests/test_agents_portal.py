@@ -50,6 +50,19 @@ class Portal(unittest.TestCase):
         self.assertEqual(d["signal"], sig.iloc[-100:].tolist())      # same rule as the bot (9 of 10)
         self.assertEqual([e["type"] for e in d["events"]], ["signal"])  # candles and bad lines are skipped
 
+    def test_orb_detail(self):
+        self.assertIsNone(server.orb_detail(self.root))           # no ORB status yet
+        d = os.path.join(self.root, "orb_bot", "logs")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "status_orb.json"), "w") as f:
+            json.dump({"updated": time.time(), "mode": "DRY RUN", "symbols": [{"symbol": "NVDA", "bars": []}]}, f)
+        with open(os.path.join(d, "orb_paper.jsonl"), "w") as f:
+            for day, r in (("2026-11-20", 1.0), ("2026-11-20", -1.0), ("2026-11-21", 1.0)):
+                f.write(json.dumps({"date": day, "symbol": "X", "R": r, "usd": 50 * r}) + "\n")
+        o = server.orb_detail(self.root)
+        self.assertTrue(o["running"])
+        self.assertEqual(o["history_total"], {"days": 2, "trades": 3, "wins": 2, "R": 1.0, "usd": 50.0})
+
     def test_http_and_unknown_id(self):
         server.Handler.root = self.root
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)

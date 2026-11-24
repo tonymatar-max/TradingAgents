@@ -7,12 +7,12 @@ Gates (like day-trader-skill's risk check): $50 max loss per trade, max 3 trades
 stop for the day after -$150, one trade per symbol per day, no leverage beyond cash,
 everything flat at 15:55 New York time. Orders tagged with magic 26010.
 """
-import argparse, datetime as dt, logging, math, os, time
+import argparse, datetime as dt, json, logging, math, os, time
 
 import MetaTrader5 as mt5
 import pandas as pd
 
-from orb import NY, FLAT_AT, Params, live_state
+from orb import NY, FLAT_AT, OR_END, OR_START, Params, live_state, session_trade
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--symbols", default="USTEC,US500,TSLA,NVDA,AAPL,AMZN,META,MSFT,AMD")
@@ -117,6 +117,54 @@ def flatten():
         log(f"Closed {p.symbol} #{p.ticket} at 15:55: {getattr(r, 'retcode', None)}")
 
 
+STATUS = os.path.join(HERE, "logs", "status_orb.json")
+PAPER = os.path.join(HERE, "logs", "orb_paper.jsonl")
+
+
+def symbol_view(sym, day):
+    """What the portal shows for one symbol: today's bars, the opening range and today's (paper) trade so far."""
+    v = {"symbol": sym, "bars": [], "range_high": None, "range_low": None, "trade": None}
+    if day is None or day.empty:
+        v["state"] = "no bars today"
+        return v
+    t = day.index.strftime("%H:%M")
+    v["bars"] = [{"t": f"{i:%H:%M}", "o": r.open, "h": r.high, "l": r.low, "c": r.close} for i, r in day.iterrows()]
+    rng = day[(t >= OR_START) & (t < OR_END)]
+    if len(rng) >= 3:
+        v["range_high"], v["range_low"] = float(rng.high.max()), float(rng.low.min())
+    tr = session_trade(day, P)
+    if tr:
+        done = tr["reason"] != "CLOSE" or now_ny().strftime("%H:%M") >= FLAT_AT
+        v["trade"] = {**{k: (f"{x:%H:%M}" if hasattr(x, "strftime") else x) for k, x in tr.items()},
+                      "open": not done, "usd": round(tr["R"] * a.max_loss, 2)}
+        v["state"] = ("OPEN " if not done else "CLOSED ") + tr["side"]
+    elif v["range_high"] is None:
+        v["state"] = "range forming (09:30-09:45 NY)" if t[-1] >= OR_START else "waiting for 09:30 NY"
+    elif t[-1] >= P.entry_cutoff:
+        v["state"] = "no breakout today"
+    else:
+        v["state"] = "watching for a breakout"
+    return v
+
+
+def write_status(views, acct, note=""):
+    st = {"updated": time.time(), "ny_time": now_ny().strftime("%Y-%m-%d %H:%M"), "mode": "LIVE ORDERS (demo)" if a.live_orders else "DRY RUN",
+          "account": acct.login, "balance": acct.balance, "max_loss": a.max_loss, "target_r": a.target_r,
+          "short": a.short, "magic": a.magic, "note": note, "symbols": views}
+    tmp = STATUS + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(st, f, default=str)
+    os.replace(tmp, STATUS)
+
+
+def record_day(views, date):
+    """At 15:55 NY: save each symbol's paper result for the day (the portal's history)."""
+    with open(PAPER, "a", encoding="utf-8") as f:
+        for v in views:
+            if v.get("trade"):
+                f.write(json.dumps({"date": str(date), "symbol": v["symbol"], **v["trade"]}, default=str) + "\n")
+
+
 def main():
     if not mt5.initialize():
         raise SystemExit(f"MT5 initialize failed: {mt5.last_error()}")
@@ -131,11 +179,20 @@ def main():
     seen, flat_done = set(), None
     while True:
         t = now_ny()
+        views = []
         if t.weekday() < 5:
             if t.strftime("%H:%M") >= FLAT_AT and flat_done != t.date():
                 flatten(); flat_done = t.date(); log("15:55 New York: flat for the day")
+                try:
+                    record_day([symbol_view(s, today_bars(s)) for s in SYMS], t.date())
+                except Exception as e:  # noqa: BLE001 - the history is a convenience, never stop trading for it
+                    log(f"could not record the day: {e}")
             for sym in SYMS:
                 day = today_bars(sym)
+                try:
+                    views.append(symbol_view(sym, day))
+                except Exception as e:  # noqa: BLE001
+                    views.append({"symbol": sym, "state": f"error: {e}", "bars": []})
                 if day is None or day.empty:
                     continue
                 sig = live_state(day, P)
@@ -147,6 +204,10 @@ def main():
                 side = "BUY" if sig["side"] == 1 else "SELL"
                 log(f"{sym} {side} breakout: bar {sig['bar']:%H:%M} close {sig['close']} range "
                     f"{sig['range_low']:.2f}-{sig['range_high']:.2f} -> " + (why or place(sym, sig, acct)))
+        try:
+            write_status(views, mt5.account_info() or acct, "" if t.weekday() < 5 else "weekend: market closed")
+        except Exception as e:  # noqa: BLE001
+            log(f"could not write status: {e}")
         time.sleep(20)
 
 
