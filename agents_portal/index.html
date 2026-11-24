@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Committee Agents</title>
+<style>
+:root{
+  --bg:#f5f6f8;--panel:#fff;--ink:#1b1f27;--muted:#6b7280;--line:#e3e6eb;
+  --buy:#14945a;--buy-soft:#d5f2e3;--sell:#d1393b;--sell-soft:#fadcdc;--neu:#c9ced6;--neu-soft:#eef0f3;
+  --accent:#2563eb;--warn:#b7791f;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1218;--panel:#171b23;--ink:#e6e9ef;--muted:#8b93a3;--line:#262c37;
+  --buy:#2fbf7c;--buy-soft:#123826;--sell:#ef5a5c;--sell-soft:#3d1a1b;--neu:#3a414e;--neu-soft:#1f242d;
+  --accent:#5b8cff;--warn:#e0a84a;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font-size:17px;margin:0;font-weight:650}
+header .sub{color:var(--muted);font-size:12px}
+header .right{margin-left:auto;color:var(--muted);font-size:12px}
+.wrap{padding:16px 20px;max-width:1500px;margin:0 auto}
+.bots{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.bot{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;cursor:pointer;min-width:210px;text-align:left;color:inherit;font:inherit}
+.bot.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.bot .sym{font-weight:650;font-size:15px}
+.bot .meta{color:var(--muted);font-size:12px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:14px}
+@media (max-width:1000px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card h2{font-size:13px;margin:0 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+canvas{display:block;width:100%}
+.legend{display:flex;gap:14px;color:var(--muted);font-size:12px;margin-top:6px;flex-wrap:wrap}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.now{display:flex;align-items:center;gap:16px}
+.verdict{font-size:22px;font-weight:700}
+.agents{display:flex;flex-direction:column;gap:6px;margin-top:12px}
+.ag{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:7px 9px;border-radius:8px;background:var(--neu-soft)}
+.ag.b{background:var(--buy-soft)}.ag.s{background:var(--sell-soft)}
+.ag .n{font-weight:600;font-size:13px}.ag .d{color:var(--muted);font-size:11px}
+.pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;color:#fff;background:var(--neu)}
+.pill.b{background:var(--buy)}.pill.s{background:var(--sell)}
+.num{font-variant-numeric:tabular-nums}
+.ev{font-size:12px;border-top:1px solid var(--line);padding:6px 0}
+.ev:first-child{border-top:0}
+.muted{color:var(--muted)}
+#tip{position:fixed;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;display:none;z-index:5;box-shadow:0 4px 16px rgba(0,0,0,.15);max-width:280px}
+.warnbar{background:var(--sell-soft);border:1px solid var(--sell);color:var(--ink);padding:8px 12px;border-radius:8px;margin-bottom:12px;display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>Committee Agents</h1>
+  <span class="sub">read-only view of the running bots · demo / dry run</span>
+  <span class="right" id="clock"></span>
+</header>
+<div class="wrap">
+  <div class="bots" id="bots"></div>
+  <div class="warnbar" id="warn"></div>
+  <div class="grid">
+    <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+      <div class="card">
+        <h2 id="chartTitle">Price and committee signals</h2>
+        <canvas id="price" height="320"></canvas>
+        <div class="legend"><span><span class="sw" style="background:var(--buy)"></span>committee BUY signal</span><span><span class="sw" style="background:var(--sell)"></span>committee SELL signal</span><span>hover a candle to see every agent's vote</span></div>
+      </div>
+      <div class="card">
+        <h2>Agreement per candle (agents voting BUY up, SELL down)</h2>
+        <canvas id="agree" height="150"></canvas>
+        <div class="legend"><span>dashed line = votes needed to trade</span></div>
+      </div>
+      <div class="card">
+        <h2>Each agent's vote per candle</h2>
+        <canvas id="heat" height="260"></canvas>
+        <div class="legend"><span><span class="sw" style="background:var(--buy)"></span>BUY</span><span><span class="sw" style="background:var(--sell)"></span>SELL</span><span><span class="sw" style="background:var(--neu)"></span>neutral</span></div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+      <div class="card">
+        <h2>Committee now</h2>
+        <div class="now"><canvas id="donut" width="120" height="120" style="width:120px;height:120px"></canvas>
+          <div><div class="verdict" id="verdict">-</div><div class="muted" id="verdictSub"></div><div class="muted num" id="price2"></div></div></div>
+        <div class="agents" id="agents"></div>
+      </div>
+      <div class="card"><h2>Recent bot events</h2><div id="events" class="muted">-</div></div>
+    </div>
+  </div>
+</div>
+<div id="tip"></div>
+<script>
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let bots = [], sel = null, data = null, hover = null;
+try { sel = localStorage.getItem("agents_portal_sel"); } catch (e) {}
+
+const short = n => n.replace(/^\d+_/, "").replace(/_/g, " ");
+const fmt = (x, d = 2) => x == null ? "-" : Number(x).toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d});
+const ago = s => s < 90 ? s + " s" : s < 5400 ? Math.round(s / 60) + " min" : s < 172800 ? Math.round(s / 3600) + " h" : Math.round(s / 86400) + " days";
+
+async function loadBots() {
+  bots = await (await fetch("/api/bots")).json();
+  if (!bots.find(b => b.id === sel)) sel = bots.length ? (bots.find(b => b.running) || bots[0]).id : null;
+  $("bots").innerHTML = bots.map(b => `
+    <button class="bot ${b.id === sel ? "sel" : ""}" data-id="${b.id}">
+      <div class="sym"><span class="dot" style="background:${b.running ? "var(--buy)" : "var(--sell)"}"></span>${b.symbol} <span class="muted" style="font-weight:400;font-size:12px">${b.timeframe || ""} · ${b.id}</span></div>
+      <div class="meta">${b.mode} · needs ${b.votes_needed}/10 · magic ${b.magic}</div>
+      <div class="meta num">equity ${fmt(b.equity)} · ${b.running ? "updated " + ago(b.updated_age_s) + " ago" : "STOPPED (" + ago(b.updated_age_s) + ")"}</div>
+    </button>`).join("") || '<span class="muted">No bot log folders found (folders with a status.json).</span>';
+  document.querySelectorAll(".bot").forEach(el => el.onclick = () => { sel = el.dataset.id; try { localStorage.setItem("agents_portal_sel", sel); } catch (e) {} refresh(); });
+}
+
+async function loadBot() {
+  if (!sel) return;
+  const r = await fetch("/api/bot?id=" + encodeURIComponent(sel));
+  data = await r.json();
+  if (data.error) { $("warn").style.display = "block"; $("warn").textContent = data.error; return; }
+  const b = data.bot;
+  $("warn").style.display = b.running ? "none" : "block";
+  $("warn").textContent = `This bot has not updated for ${ago(b.updated_age_s)}: it is probably not running. The view shows its last saved candles.`;
+  $("chartTitle").textContent = `${b.symbol} ${b.timeframe || ""} · last ${data.candles.length} closed candles`;
+  drawAll();
+  drawNow();
+  drawEvents();
+}
+
+function setup(cv) {
+  // logical height lives in data-h; cv.height is the PIXEL size (x devicePixelRatio) and must never be read back
+  if (!cv.dataset.h) cv.dataset.h = cv.getAttribute("height");
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = +cv.dataset.h;
+  cv.width = w * dpr; cv.height = h * dpr; cv.style.height = h + "px";
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  g.font = "11px system-ui"; return [g, w, h];
+}
+const PADL = 8, PADR = 96;
+const xOf = (i, n, w) => PADL + (i + 0.5) * (w - PADL - PADR) / n;
+
+function drawPrice() {
+  const cv = $("price"), [g, w, h] = setup(cv), c = data.candles, n = c.length; if (!n) return;
+  let lo = Math.min(...c.map(k => k.l)), hi = Math.max(...c.map(k => k.h)); const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const y = v => 10 + (hi - v) / (hi - lo) * (h - 30), bw = Math.max(1, (w - PADL - PADR) / n * 0.65);
+  g.strokeStyle = css("--line"); g.fillStyle = css("--muted"); g.textAlign = "left";
+  for (let k = 0; k <= 4; k++) { const v = lo + (hi - lo) * k / 4, yy = y(v); g.beginPath(); g.moveTo(PADL, yy); g.lineTo(w - PADR, yy); g.stroke(); g.fillText(fmt(v, v > 1000 ? 0 : 2), w - PADR + 6, yy + 4); }
+  c.forEach((k, i) => {
+    const x = xOf(i, n, w), up = k.c >= k.o, col = up ? css("--buy") : css("--sell");
+    g.strokeStyle = col; g.fillStyle = col; g.beginPath(); g.moveTo(x, y(k.h)); g.lineTo(x, y(k.l)); g.stroke();
+    g.fillRect(x - bw / 2, y(Math.max(k.o, k.c)), bw, Math.max(1, Math.abs(y(k.o) - y(k.c))));
+  });
+  // a marker where the committee's signal STARTS (the bot trades the first one if flat)
+  data.signal.forEach((s, i) => {
+    if (!s || data.signal[i - 1] === s) return;
+    const x = xOf(i, n, w), k = c[i]; g.fillStyle = s > 0 ? css("--buy") : css("--sell"); g.beginPath();
+    if (s > 0) { const yy = y(k.l) + 6; g.moveTo(x, yy); g.lineTo(x - 6, yy + 9); g.lineTo(x + 6, yy + 9); }
+    else { const yy = y(k.h) - 6; g.moveTo(x, yy); g.lineTo(x - 6, yy - 9); g.lineTo(x + 6, yy - 9); }
+    g.fill();
+  });
+  const last = c[n - 1].c; g.fillStyle = css("--accent"); g.fillRect(w - PADR + 2, y(last) - 8, PADR - 4, 16); g.fillStyle = "#fff"; g.fillText(fmt(last, last > 1000 ? 1 : 2), w - PADR + 6, y(last) + 4);
+  hoverLine(g, w, h, n);
+  const step = Math.ceil(n / 6); g.fillStyle = css("--muted"); g.textAlign = "center";
+  for (let i = 0; i < n; i += step) g.fillText(c[i].t.slice(5, 13), xOf(i, n, w), h - 4);
+}
+
+function drawAgree() {
+  const cv = $("agree"), [g, w, h] = setup(cv), n = data.candles.length; if (!n) return;
+  const mid = h / 2, sc = (h / 2 - 8) / 10, bw = Math.max(1, (w - PADL - PADR) / n * 0.7), need = data.bot.votes_needed || 9;
+  for (let i = 0; i < n; i++) {
+    const x = xOf(i, n, w), b = data.buy_count[i], s = data.sell_count[i];
+    g.fillStyle = b >= need ? css("--buy") : css("--buy-soft"); g.fillRect(x - bw / 2, mid - b * sc, bw, b * sc);
+    g.fillStyle = s >= need ? css("--sell") : css("--sell-soft"); g.fillRect(x - bw / 2, mid, bw, s * sc);
+  }
+  g.strokeStyle = css("--muted"); g.setLineDash([4, 4]);
+  [mid - need * sc, mid + need * sc].forEach(yy => { g.beginPath(); g.moveTo(PADL, yy); g.lineTo(w - PADR, yy); g.stroke(); });
+  g.setLineDash([]); g.fillStyle = css("--muted"); g.textAlign = "left";
+  g.fillText(need + " buy", w - PADR + 6, mid - need * sc + 4); g.fillText(need + " sell", w - PADR + 6, mid + need * sc + 4);
+  g.strokeStyle = css("--line"); g.beginPath(); g.moveTo(PADL, mid); g.lineTo(w - PADR, mid); g.stroke();
+  hoverLine(g, w, h, n);
+}
+
+function drawHeat() {
+  const cv = $("heat"), ag = data.agents, rows = ag.length, n = data.candles.length;
+  cv.dataset.h = rows * 24 + 8;
+  const [g, w] = setup(cv); if (!n) return;
+  const cw = (w - PADL - PADR) / n;
+  ag.forEach((a, r) => {
+    a.votes.forEach((v, i) => {
+      g.fillStyle = v > 0 ? css("--buy") : v < 0 ? css("--sell") : css("--neu-soft");
+      g.fillRect(PADL + i * cw, 4 + r * 24, Math.max(1, cw - (cw > 3 ? 1 : 0)), 20);
+    });
+    g.fillStyle = css("--muted"); g.textAlign = "left"; g.fillText(short(a.name).slice(0, 16), w - PADR + 6, 18 + r * 24);
+  });
+  hoverLine(g, w, rows * 24 + 8, n);
+}
+
+function hoverLine(g, w, h, n) {
+  if (hover == null) return;
+  const x = xOf(hover, n, w); g.strokeStyle = css("--accent"); g.lineWidth = 1; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+}
+
+function drawAll() { if (!data || !data.candles) return; drawPrice(); drawAgree(); drawHeat(); }
+
+function drawNow() {
+  const n = data.candles.length, b = data.bot; if (!n) return;
+  const buy = data.buy_count[n - 1], sell = data.sell_count[n - 1], neu = 10 - buy - sell, need = b.votes_needed || 9;
+  const cv = $("donut"), dpr = window.devicePixelRatio || 1; cv.width = 120 * dpr; cv.height = 120 * dpr;
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  let a0 = -Math.PI / 2; [[buy, "--buy"], [sell, "--sell"], [neu, "--neu"]].forEach(([v, c]) => {
+    if (!v) return; const a1 = a0 + v / 10 * Math.PI * 2; g.beginPath(); g.arc(60, 60, 52, a0, a1); g.arc(60, 60, 34, a1, a0, true); g.closePath(); g.fillStyle = css(c); g.fill(); a0 = a1; });
+  g.fillStyle = css("--ink"); g.font = "700 20px system-ui"; g.textAlign = "center"; g.fillText(Math.max(buy, sell) + "/10", 60, 66);
+  const sig = data.signal[n - 1];
+  $("verdict").textContent = sig > 0 ? "BUY" : sig < 0 ? "SELL" : "HOLD";
+  $("verdict").style.color = sig > 0 ? css("--buy") : sig < 0 ? css("--sell") : css("--muted");
+  $("verdictSub").textContent = `${buy} buy · ${sell} sell · ${neu} neutral — needs ${need}`;
+  $("price2").textContent = `candle ${data.candles[n - 1].t}` + (b.bid ? ` · bid ${fmt(b.bid)}` : "");
+  $("agents").innerHTML = data.agents.map(a => {
+    const k = a.now > 0 ? "b" : a.now < 0 ? "s" : "";
+    const streak = (() => { let s = 0; for (let i = a.votes.length - 1; i >= 0 && a.votes[i] === a.now; i--) s++; return s; })();
+    return `<div class="ag ${k}"><span class="pill ${k}">${a.now > 0 ? "BUY" : a.now < 0 ? "SELL" : "—"}</span>
+      <div><div class="n">${short(a.name)}</div><div class="d">${a.info}</div></div>
+      <span class="muted num" title="candles in a row with this vote">${streak}×</span></div>`;
+  }).join("");
+}
+
+function drawEvents() {
+  const ev = (data.events || []).slice().reverse();
+  $("events").innerHTML = ev.length ? ev.slice(0, 25).map(e => {
+    const t = e.ts ? String(e.ts).replace("T", " ").replace("Z", "").slice(0, 16) : "";
+    let txt = e.type;
+    if (e.type === "signal") txt = `<b style="color:${e.dir === "BUY" ? "var(--buy)" : "var(--sell)"}">${e.dir}</b> ${e.lots} lots @ ${fmt(e.entry)} · SL ${fmt(e.sl)} · TP ${fmt(e.tp)} (${e.mode})`;
+    else if (e.type === "paper_close") txt = `closed ${e.dir} by ${e.reason} · P&L <b style="color:${e.pnl >= 0 ? "var(--buy)" : "var(--sell)"}">${fmt(e.pnl)}</b>`;
+    else if (e.type === "skip") txt = `skipped: ${e.status || ""}`;
+    else if (e.type === "ai_review") txt = `AI review: ${e.verdict || ""} ${e.reason ? "— " + e.reason : ""}`;
+    return `<div class="ev"><span class="num">${t}</span><br>${txt}</div>`;
+  }).join("") : "No trades or skips logged yet.";
+}
+
+function onMove(ev) {
+  if (!data || !data.candles.length) return;
+  const cv = ev.currentTarget, r = cv.getBoundingClientRect(), n = data.candles.length;
+  const i = Math.floor((ev.clientX - r.left - PADL) / ((r.width - PADL - PADR) / n));
+  if (i < 0 || i >= n) { hover = null; $("tip").style.display = "none"; drawAll(); return; }
+  hover = i; drawAll();
+  const k = data.candles[i], tip = $("tip");
+  tip.innerHTML = `<b>${k.t}</b><br>O ${fmt(k.o)} H ${fmt(k.h)} L ${fmt(k.l)} C ${fmt(k.c)}<br>${data.buy_count[i]} buy · ${data.sell_count[i]} sell` +
+    (data.signal[i] ? ` → <b style="color:${data.signal[i] > 0 ? "var(--buy)" : "var(--sell)"}">${data.signal[i] > 0 ? "BUY" : "SELL"}</b>` : "") +
+    "<br>" + data.agents.map(a => `<span style="color:${a.votes[i] > 0 ? "var(--buy)" : a.votes[i] < 0 ? "var(--sell)" : "var(--muted)"}">${a.votes[i] > 0 ? "▲" : a.votes[i] < 0 ? "▼" : "•"} ${short(a.name)}</span>`).join("<br>");
+  tip.style.display = "block";
+  tip.style.left = Math.min(ev.clientX + 14, innerWidth - 290) + "px"; tip.style.top = Math.min(ev.clientY + 14, innerHeight - 300) + "px";
+}
+["price", "agree", "heat"].forEach(id => { $(id).addEventListener("mousemove", onMove); $(id).addEventListener("mouseleave", () => { hover = null; $("tip").style.display = "none"; drawAll(); }); });
+addEventListener("resize", drawAll);
+
+async function refresh() {
+  try { await loadBots(); await loadBot(); $("clock").textContent = "refreshed " + new Date().toLocaleTimeString() + " · every 30 s"; }
+  catch (e) { $("clock").textContent = "portal server not reachable: " + e.message; }
+}
+refresh(); setInterval(refresh, 30000);
+</script>
+</body>
+</html>

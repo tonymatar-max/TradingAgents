@@ -12,7 +12,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal", "agentstats", "parity", "reportcheck", "aireport"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal", "agentstats", "parity", "reportcheck", "aireport", "lossreport", "walkforward"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -37,10 +37,6 @@ def main():
                    help="mt5: AI second opinion before an entry. shadow = log only (start here), veto = a VETO blocks the trade. Fails open. Key from env AI_REVIEW_API_KEY")
     p.add_argument("--ai-url", default="http://localhost:3001/v1", help="OpenAI-compatible base URL for --ai-review")
     p.add_argument("--ai-model", default="auto", help="model id for --ai-review")
-    p.add_argument("--ai-panel", default="", help="mt5: e.g. claude,grok = ask BOTH models; with --ai-review veto a trade needs ALLOW from all "
-                   "(an API error also blocks). Keys from env ANTHROPIC_API_KEY and XAI_API_KEY")
-    p.add_argument("--claude-model", default="claude-opus-5-5", help="model id for the Claude panel member")
-    p.add_argument("--grok-model", default="grok-4", help="model id for the Grok panel member")
     p.add_argument("--magic", type=int, default=26001, help="mt5: order tag; use a different one per bot when running several")
     p.add_argument("--tfs", default="M15,M30,H1,H4", help="tfscan: comma list of timeframes")
     p.add_argument("--htf-min", type=int, default=0, help="require >= N of 10 agents on the higher timeframe to agree (0 = off)")
@@ -63,6 +59,8 @@ def main():
     p.add_argument("--sls", default="1.0,1.5,2.0", help="optimize: stop sizes in ATR to try")
     p.add_argument("--tps", default="2.0,3.0,4.0", help="optimize: target sizes in ATR to try")
     p.add_argument("--live", action="store_true", help="agentstats: analyse the live/dry-run paper trades in --logdir instead of a backtest")
+    p.add_argument("--train-months", type=int, default=12, help="walkforward: months of past data used to learn each month's agent weights")
+    p.add_argument("--horizon", type=int, default=10, help="walkforward: bars ahead used to score whether an agent's vote was right")
     p.add_argument("--events", help="parity: the EA's events.jsonl (Common\\Files\\xauusd_ea)")
     p.add_argument("--agent-scale", type=float, default=1.0, help="multiply every agent period (2.0 on M30 keeps the same time spans as H1)")
     p.add_argument("--require", default="", help="agent numbers (1-10) that MUST agree in addition to the vote count, e.g. 6 = Stochastic Bias, 3,6 = RSI and Stochastic")
@@ -163,6 +161,61 @@ def main():
         print(f"  committee vote counts identical on {res['same_vote_counts_%']}% of candles")
         for t, name, ea_v, py_v in res["examples"][:10]:
             print(f"  e.g. {t} {name}: EA {ea_v:+d} vs Python {py_v:+d}")
+        return
+
+    if a.cmd in ("lossreport", "walkforward"):
+        from .learning import live_context, loss_report, trade_context, walk_forward
+        pd.set_option("display.width", 220)
+        pd.set_option("display.max_rows", 500)
+        if a.cmd == "lossreport" and a.live:
+            ctx = live_context(a.logdir)
+            if ctx.empty:
+                raise SystemExit("No closed paper trades with recorded votes yet.")
+            res = loss_report(ctx)
+            print(f"Live/dry-run: {len(ctx)} closed paper trades, {res.attrs['losses']} losses (needs 30+ to mean anything)\n")
+            print(res.drop(columns=["n_early", "avgR_early", "n_late", "avgR_late", "pattern"]).to_string(index=False))
+            return
+        if not (a.csv and a.start and (a.split or a.cmd == "walkforward")):
+            raise SystemExit(f"{a.cmd} needs --csv and --from" + (" and --split (or --live)" if a.cmd == "lossreport" else ""))
+        df = load_csv(a.csv)
+        if a.end:
+            df = df[: pd.Timestamp(a.end) + pd.Timedelta(days=1)]
+        dirn = None
+        if a.htf_min:
+            from .htf import htf_direction
+            dirn = htf_direction(df, load_htf(df), a.htf_min)
+        cfg = Config(risk_pct=a.risk, spread=a.spread, sl_atr=a.sl_atr, tp_atr=a.tp_atr, balance=a.balance, fixed_lots=a.lots)
+        if a.cmd == "lossreport":
+            from .htf import filter_signals
+            com = make_com()
+            table = com.vote_table(df)
+            sig = com.signals(df, table)
+            if dirn is not None:
+                sig = filter_signals(sig, dirn)
+            trades, _, _ = run_backtest(df, com, cfg, start=a.start, signals=sig)
+            ctx = trade_context(df, trades, table, cfg.contract_oz)
+            if ctx.empty:
+                raise SystemExit("No trades.")
+            res = loss_report(ctx, a.split)
+            o = res.attrs["overall"]
+            print(f"{o['n']} trades, {res.attrs['losses']} losses, win {o['win%']}%, avg {o['avg_R']}R. "
+                  f"early = {a.start} -> {a.split}, late = {a.split} -> end\n")
+            print(res.to_string(index=False))
+            print(f"\npattern: a group is flagged only if its avg R is 0.1R+ worse (or better) than average in BOTH halves with "
+                  f"{20}+ trades in each.\n'noise' is the normal answer. A flagged group is a candidate rule to test, not a rule.")
+            return
+        monthly, summ, weights = walk_forward(df, agents, a.threshold, cfg, a.start, a.train_months, a.horizon, dirn)
+        print(f"Walk-forward: weights re-learned monthly from the previous {a.train_months} months (scored {a.horizon} bars ahead), "
+              f"traded on the next month only.\n")
+        print(monthly.to_string(index=False))
+        print("\nSummary (R = profit in multiples of the money risked):")
+        for name in ("plain", "learned"):
+            for part, st in summ[name].items():
+                print(f"  {name:8s} {part:12s} {st}")
+        print(f"  months learned better: {summ['months_learned_better']}, plain better: {summ['months_plain_better']}")
+        print("\nLast learned weights (10 = equal share; 0 = no say):")
+        print(weights.tail(3).to_string())
+        print("\nAdopt 'learned' only if it beats 'plain' in BOTH halves. Even then it is a new version to dry-run first.")
         return
 
     if a.cmd == "agentstats":
@@ -269,10 +322,7 @@ def main():
         from .news import NewsFilter
         news = NewsFilter(a.news_before, a.news_after) if a.news else None
         reviewer = None
-        if a.ai_review != "off" and a.ai_panel:
-            from .ai_panel import build_panel
-            reviewer = build_panel(a.ai_panel, a.ai_review, a.claude_model, a.grok_model)
-        elif a.ai_review != "off":
+        if a.ai_review != "off":
             from .ai_review import AiReviewer
             reviewer = AiReviewer(a.ai_url, a.ai_model, a.ai_review)
         Mt5Bot(mt5, a.symbol, a.timeframe, make_com(), news=news, ai_review=reviewer, risk_pct=a.risk,

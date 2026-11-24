@@ -3,3 +3,11 @@ __pycache__/
 news_cache.json
 *.csv
 logs/
+
+logs_*/
+scripts/services/
+result_*.txt
+result_*.txt*
+multi_symbol/out.txt
+multi_symbol/results_sweeps.json
+.claude/
