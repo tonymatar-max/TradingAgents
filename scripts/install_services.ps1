@@ -65,6 +65,9 @@ foreach ($b in $Bots) {
 }
 $portalLog = Join-Path $Root "logs_portal"
 $launchers["Portal"] = Write-Launcher "Portal" $portalLog "& `"$py`" agents_portal\server.py --port $PortalPort --root `"$Root`""
+# ORB: ALWAYS dry run (never --live-orders). It lost money in the 2026 replay; this only watches it on paper.
+$orbLog = Join-Path $Root "orb_bot\logs"
+$launchers["ORB"] = Write-Launcher "ORB" $orbLog "Set-Location `"$Root\orb_bot`"; & `"$py`" orb_bot.py"
 
 # ---- MT5 terminal
 $mt5 = @("$env:ProgramFiles\MetaTrader 5 EXNESS\terminal64.exe", "$env:ProgramFiles\MetaTrader 5\terminal64.exe") +
@@ -85,7 +88,7 @@ if ($mt5) {
     Write-Warning "terminal64.exe not found: start MT5 yourself after each logon."
 }
 
-foreach ($name in @("USTEC", "GoldV2", "Portal")) {
+foreach ($name in @("USTEC", "GoldV2", "Portal", "ORB")) {
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
     if ($name -ne "Portal") { $trigger.Delay = "PT1M" }   # give MT5 a minute to log in
     Register-ScheduledTask -TaskName "Svc-$name" -Principal $principal -Settings $settings -Trigger $trigger -Force `
@@ -97,7 +100,7 @@ foreach ($name in @("USTEC", "GoldV2", "Portal")) {
 
 Write-Host @"
 
-Mode: $(if ($DryRun) { 'DRY RUN (no orders)' } else { 'LIVE ORDERS on the DEMO account' })
+Mode: $(if ($DryRun) { 'DRY RUN (no orders)' } else { 'LIVE ORDERS on the DEMO account' }) for USTEC and gold v2; ORB is always a dry run
 Portal: http://127.0.0.1:$PortalPort
 Logs:   logs_ustec\bot.log, logs_gold_v2\bot.log, crash.log in each folder
 Close any bot windows you started by hand, or the same bot runs twice (the task ignores a second copy of itself, not yours).
