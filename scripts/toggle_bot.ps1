@@ -1,45 +1,59 @@
-# Switch one committee bot on or off on THIS machine (remembered in bots.local.json, survives restarts and git pull).
+# Switch, add or list committee bots on THIS machine (choices kept in bots.local.json: survive restarts and git pull).
 #   powershell -ExecutionPolicy Bypass -File scripts\toggle_bot.ps1 -List
-#   powershell -ExecutionPolicy Bypass -File scripts\toggle_bot.ps1 -Name GBPUSD -On
-#   powershell -ExecutionPolicy Bypass -File scripts\toggle_bot.ps1 -Name GBPUSD -Off
-# Switching OFF stops the bot; a position it already opened stays open in MT5 with its stop and target.
-param([string]$Name, [switch]$On, [switch]$Off, [switch]$List)
+#   powershell -ExecutionPolicy Bypass -File scripts\toggle_bot.ps1 -Name GBPUSD -On     (or -Off)
+#   powershell -ExecutionPolicy Bypass -File scripts\toggle_bot.ps1 -Add -Symbol EURJPY -SlAtr 1.5 -TpAtr 2.0
+# The portal's Instruments panel calls this same script. Switching OFF stops the bot; a position it already opened
+# stays open in MT5 with its stop and target.
+param([string]$Name, [switch]$On, [switch]$Off, [switch]$List, [switch]$Json,
+      [switch]$Add, [string]$Symbol, [double]$SlAtr = 1.5, [double]$TpAtr = 2.0)
 $ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent $PSScriptRoot
-$cfg = Get-Content (Join-Path $Root "bots.json") -Raw | ConvertFrom-Json
-$localFile = Join-Path $Root "bots.local.json"
-$local = [ordered]@{}
-if (Test-Path $localFile) { (Get-Content $localFile -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $local[$_.Name] = [bool]$_.Value } }
+. (Join-Path $PSScriptRoot "svc_common.ps1")
+$local = Read-Local
 
-function Show-List {
+function Get-View {
+    $cfg = Get-Bots $local
     foreach ($b in $cfg.bots) {
-        $want = if ($local.Contains($b.name)) { $local[$b.name] } else { [bool]$b.enabled }
         $t = Get-ScheduledTask -TaskName "Svc-$($b.name)" -ErrorAction SilentlyContinue
-        $state = if ($t) { $t.State } else { "not installed" }
-        Write-Host ("{0,-8} {1,-4} task {2,-13} {3,-7} {4}" -f $b.name, $(if ($want) {"ON"} else {"off"}), $state, $b.symbol, $b.evidence)
+        [pscustomobject]@{ name = $b.name; symbol = $b.symbol; on = [bool]$b.on; sl_atr = $b.sl_atr; tp_atr = $b.tp_atr; magic = $b.magic
+                           logdir = $b.logdir; evidence = $b.evidence; added = [bool]($local.extra | Where-Object { $_.name -eq $b.name })
+                           task = $(if ($t) { [string]$t.State } else { "not installed" }) }
     }
 }
+function Show-View {
+    $v = @(Get-View)
+    if ($Json) { ConvertTo-Json @{ bots = $v; live = $local.live; installed = [bool]$local.python } -Depth 4 -Compress; return }
+    $v | ForEach-Object { Write-Host ("{0,-8} {1,-4} task {2,-13} {3,-7} {4}" -f $_.name, $(if ($_.on) {"ON"} else {"off"}), $_.task, $_.symbol, $_.evidence) }
+}
+function Apply($bot) {
+    if (-not $local.python) { Write-Host "Saved. Not installed on this machine yet: run SETUP.bat or scripts\install_services.ps1."; return }
+    $cfg = Get-Bots $local
+    $b = $cfg.bots | Where-Object { $_.name -eq $bot }
+    if (Get-ScheduledTask -TaskName "Svc-$bot" -ErrorAction SilentlyContinue) { Set-SvcState $bot $b.on }
+    else { Install-Bot $b $cfg $local.python $local.live }
+}
 
-if ($List -or -not $Name) { Show-List; return }
+if ($Add) {
+    $sym = $Symbol.Trim().ToUpper()
+    if ($sym -notmatch '^[A-Z0-9._#]{2,20}$') { throw "invalid symbol '$Symbol'" }
+    if ($SlAtr -le 0 -or $SlAtr -gt 10 -or $TpAtr -le 0 -or $TpAtr -gt 20) { throw "stop/target ATR out of range" }
+    $cfg = Get-Bots $local
+    if ($cfg.bots | Where-Object { $_.symbol -ieq $sym }) { throw "$sym is already in the list: switch it on instead" }
+    $name = ($sym -replace '[^A-Z0-9]', '')
+    $magic = 1 + ($cfg.bots | ForEach-Object { [int]$_.magic } | Measure-Object -Maximum).Maximum
+    $local.extra = @($local.extra) + [pscustomobject]@{ name = $name; symbol = $sym; sl_atr = $SlAtr; tp_atr = $TpAtr; magic = $magic; logdir = "logs_$($name.ToLower())" }
+    $local.enabled[$name] = $true
+    Save-Local $local
+    Apply $name
+    if (-not $Json) { Write-Host "Added $sym (magic $magic) and switched it ON." }
+    Show-View; return
+}
+
+if ($List -or -not $Name) { Show-View; return }
 if ($On -eq $Off) { throw "say -On or -Off" }
-$bot = $cfg.bots | Where-Object { $_.name -ieq $Name }
-if (-not $bot) { throw "unknown bot '$Name'. Known: $(($cfg.bots | ForEach-Object name) -join ', ')" }
-
-$local[$bot.name] = [bool]$On
-$local | ConvertTo-Json | Set-Content -Encoding UTF8 $localFile
-
-$task = "Svc-$($bot.name)"
-if (-not (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue)) {
-    Write-Host "$task is not installed yet: saved your choice; run scripts\install_services.ps1 (or SETUP.bat) to create it."
-    return
-}
-if ($On) {
-    Enable-ScheduledTask -TaskName $task | Out-Null
-    Start-ScheduledTask -TaskName $task
-    Write-Host "$($bot.name) ON: started, and starts at every logon."
-} else {
-    Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
-    Disable-ScheduledTask -TaskName $task | Out-Null
-    Write-Host "$($bot.name) off: stopped, and will not start at logon. Open positions (magic $($bot.magic)) stay in MT5."
-}
-Show-List
+$bot = (Get-Bots $local).bots | Where-Object { $_.name -ieq $Name }
+if (-not $bot) { throw "unknown bot '$Name'" }
+$local.enabled[$bot.name] = [bool]$On
+Save-Local $local
+Apply $bot.name
+if (-not $Json) { Write-Host "$($bot.name) $(if ($On) {'ON'} else {'off'})." }
+Show-View

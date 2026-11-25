@@ -120,8 +120,86 @@ def orb_detail(root: str) -> dict | None:
     return st
 
 
+import re
+import subprocess
+
+SYMBOL_RE = re.compile(r"^[A-Za-z0-9._#]{2,20}$")
+NAME_RE = re.compile(r"^[A-Za-z0-9]{1,20}$")
+
+
+def run_toggle(root: str, args: list[str]) -> dict:
+    """Runs scripts/toggle_bot.ps1 (the same script as the command line) and returns its JSON view."""
+    script = os.path.join(root, "scripts", "toggle_bot.ps1")
+    r = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, *args, "-Json"],
+                       capture_output=True, text=True, timeout=120, cwd=root)
+    out = r.stdout.strip().splitlines()
+    if r.returncode != 0 or not out:
+        msg = (r.stderr or r.stdout).strip().splitlines()
+        raise RuntimeError(next((m for m in msg if m.strip() and not m.startswith(("At ", "+", " "))), "toggle_bot.ps1 failed"))
+    return json.loads(out[-1])
+
+
+def symbol_check(symbol: str) -> str | None:
+    """None if MT5 knows the symbol (or MT5 is not reachable from here); else a message."""
+    try:
+        import MetaTrader5 as mt5
+    except ImportError:
+        return None
+    if not mt5.initialize():
+        return None
+    try:
+        return None if mt5.symbol_info(symbol) is not None else f"{symbol} is not a symbol on this MT5 account (check the exact name in Market Watch)"
+    finally:
+        mt5.shutdown()
+
+
 class Handler(BaseHTTPRequestHandler):
     root = "."
+    toggle = staticmethod(run_toggle)
+    check_symbol = staticmethod(symbol_check)
+
+    def _may_change(self) -> str | None:
+        """Changes only from this machine, from the portal's own page (a custom header blocks other websites)."""
+        if self.client_address[0] not in ("127.0.0.1", "::1"):
+            return "changes are only allowed from the machine the portal runs on"
+        if self.headers.get("X-Portal") != "1":
+            return "missing X-Portal header"
+        origin = self.headers.get("Origin")
+        if origin and urlparse(origin).hostname not in ("127.0.0.1", "localhost", "::1"):
+            return "wrong origin"
+        return None
+
+    def do_POST(self):
+        u = urlparse(self.path)
+        if u.path != "/api/instruments":
+            return self._send(404, b"not found", "text/plain")
+        why = self._may_change()
+        if why:
+            return self._send(403, json.dumps({"error": why}).encode(), "application/json")
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            req = json.loads(self.rfile.read(min(n, 10_000)) or b"{}")
+            if req.get("action") == "toggle":
+                name = str(req.get("name", ""))
+                if not NAME_RE.match(name):
+                    raise ValueError("bad name")
+                data = self.toggle(self.root, ["-Name", name, "-On" if req.get("on") else "-Off"])
+            elif req.get("action") == "add":
+                sym = str(req.get("symbol", "")).strip()
+                sl, tp = float(req.get("sl_atr", 1.5)), float(req.get("tp_atr", 2.0))
+                if not SYMBOL_RE.match(sym):
+                    raise ValueError("symbol: letters, digits and . _ # only")
+                if not (0 < sl <= 10 and 0 < tp <= 20):
+                    raise ValueError("stop must be 0-10 ATR and target 0-20 ATR")
+                bad = self.check_symbol(sym)
+                if bad:
+                    raise ValueError(bad)
+                data = self.toggle(self.root, ["-Add", "-Symbol", sym, "-SlAtr", str(sl), "-TpAtr", str(tp)])
+            else:
+                raise ValueError("unknown action")
+            return self._send(200, json.dumps(data).encode(), "application/json")
+        except (ValueError, RuntimeError, subprocess.TimeoutExpired) as e:
+            return self._send(400, json.dumps({"error": str(e)}).encode(), "application/json")
 
     def log_message(self, *args):
         pass
@@ -142,6 +220,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, f.read(), "text/html; charset=utf-8")
             if u.path == "/api/bots":
                 data = [bot_summary(self.root, n) for n in find_bots(self.root)]
+            elif u.path == "/api/instruments":
+                data = self.toggle(self.root, ["-List"])
             elif u.path == "/api/orb":
                 data = orb_detail(self.root)
                 if data is None:

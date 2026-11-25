@@ -80,5 +80,47 @@ class Portal(unittest.TestCase):
             httpd.shutdown()
 
 
+class Instruments(unittest.TestCase):
+    def setUp(self):
+        self.calls = []
+        server.Handler.root = tempfile.mkdtemp()
+        server.Handler.toggle = staticmethod(lambda root, args: self.calls.append(args) or {"bots": [], "live": True})
+        server.Handler.check_symbol = staticmethod(lambda s: None if s != "NOPE" else "NOPE is not a symbol")
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        server.Handler.toggle = staticmethod(server.run_toggle)
+        server.Handler.check_symbol = staticmethod(server.symbol_check)
+
+    def post(self, body, headers=None):
+        h = {"Content-Type": "application/json", "X-Portal": "1"} if headers is None else headers
+        req = urllib.request.Request(self.base + "/api/instruments", json.dumps(body).encode(), h, method="POST")
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    def test_toggle_and_add_reach_the_script(self):
+        self.assertEqual(self.post({"action": "toggle", "name": "NVDA", "on": False})[0], 200)
+        self.assertEqual(self.post({"action": "add", "symbol": "EURJPY", "sl_atr": 1.2, "tp_atr": 3})[0], 200)
+        self.assertEqual(self.calls, [["-Name", "NVDA", "-Off"], ["-Add", "-Symbol", "EURJPY", "-SlAtr", "1.2", "-TpAtr", "3.0"]])
+
+    def test_rejects_bad_input_without_calling_the_script(self):
+        for body in ({"action": "toggle", "name": "x;rm"}, {"action": "add", "symbol": "a b"},
+                     {"action": "add", "symbol": "EURJPY", "sl_atr": 0}, {"action": "add", "symbol": "NOPE"}, {"action": "x"}):
+            self.assertEqual(self.post(body)[0], 400, body)
+        self.assertEqual(self.calls, [])
+
+    def test_other_websites_cannot_change_anything(self):
+        self.assertEqual(self.post({"action": "toggle", "name": "NVDA", "on": False}, {"Content-Type": "application/json"})[0], 403)
+        self.assertEqual(self.post({"action": "toggle", "name": "NVDA", "on": False},
+                                   {"Content-Type": "application/json", "X-Portal": "1", "Origin": "https://evil.example"})[0], 403)
+        self.assertEqual(self.calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

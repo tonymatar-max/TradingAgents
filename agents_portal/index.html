@@ -48,6 +48,14 @@ canvas{display:block;width:100%}
 .ev:first-child{border-top:0}
 .muted{color:var(--muted)}
 #tip{position:fixed;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;display:none;z-index:5;box-shadow:0 4px 16px rgba(0,0,0,.15);max-width:280px}
+.btn{font:inherit;font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;margin-left:12px}
+.btn:hover{border-color:var(--accent)}
+input{font:inherit;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+label{font-size:12px;color:var(--muted)}
+.sw2{position:relative;width:40px;height:22px;border-radius:11px;border:0;cursor:pointer;background:var(--neu);transition:background .15s}
+.sw2::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s}
+.sw2.on{background:var(--buy)}.sw2.on::after{left:21px}
+.sw2:disabled{opacity:.5;cursor:wait}
 .orbgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
 .orbgrid .card h3{margin:0;font-size:15px;display:flex;justify-content:space-between;align-items:baseline}
 .state{font-size:12px;margin:2px 0 6px}
@@ -62,9 +70,23 @@ th{color:var(--muted);font-weight:600;border-top:0}
   <h1>Committee Agents</h1>
   <span class="sub">read-only view of the running bots · demo / dry run</span>
   <span class="right" id="clock"></span>
+  <button id="instBtn" class="btn">Instruments</button>
 </header>
 <div class="wrap">
   <div class="bots" id="bots"></div>
+  <div class="card" id="instPanel" style="display:none;margin-bottom:14px">
+    <h2>Instruments · 9 of 10 agents must agree · 1% risk per trade · demo account</h2>
+    <div id="instMode" class="muted" style="margin-bottom:8px"></div>
+    <div style="overflow-x:auto"><table id="instTable"></table></div>
+    <form id="addForm" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-top:12px">
+      <label>Symbol (as in MT5 Market Watch)<br><input id="addSym" required maxlength="20" placeholder="e.g. EURJPY" style="width:150px"></label>
+      <label>Stop (ATR)<br><input id="addSl" type="number" step="0.1" min="0.1" max="10" value="1.5" style="width:80px"></label>
+      <label>Target (ATR)<br><input id="addTp" type="number" step="0.1" min="0.1" max="20" value="2.0" style="width:80px"></label>
+      <button class="btn" type="submit">Add and switch on</button>
+      <span class="muted" style="font-size:12px">An added instrument has no backtest behind it: treat it as a demo experiment.</span>
+    </form>
+    <div id="instMsg" style="margin-top:8px"></div>
+  </div>
   <div class="warnbar" id="warn"></div>
   <div id="orbView" style="display:none">
     <div class="card" style="margin-bottom:14px">
@@ -125,7 +147,7 @@ async function loadBots() {
       <div class="sym"><span class="dot" style="background:${b.running ? "var(--buy)" : "var(--sell)"}"></span>${b.symbol} <span class="muted" style="font-weight:400;font-size:12px">${b.timeframe || ""} · ${b.id}</span></div>
       <div class="meta">${b.mode} · needs ${b.votes_needed}/10 · magic ${b.magic}</div>
       <div class="meta num">equity ${fmt(b.equity)} · ${b.running ? "updated " + ago(b.updated_age_s) + " ago" : "STOPPED (" + ago(b.updated_age_s) + ")"}</div>
-    </button>`).join("") + (orb ? `
+    </button>`).join("") + (orb && orb.running ? `
     <button class="bot ${sel === "__orb" ? "sel" : ""}" data-id="__orb">
       <div class="sym"><span class="dot" style="background:${orb.running ? "var(--buy)" : "var(--sell)"}"></span>ORB <span class="muted" style="font-weight:400;font-size:12px">M5 · ${orb.symbols.length} symbols</span></div>
       <div class="meta">${orb.mode} · magic ${orb.magic} · max loss $${orb.max_loss}/trade</div>
@@ -321,6 +343,51 @@ function onMove(ev) {
 }
 ["price", "agree", "heat"].forEach(id => { $(id).addEventListener("mousemove", onMove); $(id).addEventListener("mouseleave", () => { hover = null; $("tip").style.display = "none"; drawAll(); }); });
 addEventListener("resize", drawAll);
+
+// ---------------------------------------------------------------- instruments panel
+let inst = null;
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+function instMsg(text, bad) { $("instMsg").innerHTML = text ? `<span style="color:${bad ? "var(--sell)" : "var(--buy)"}">${esc(text)}</span>` : ""; }
+
+async function loadInst() {
+  if (!inst) $("instMode").textContent = "loading…";
+  const r = await fetch("/api/instruments"); const j = await r.json();
+  if (!r.ok) { instMsg(j.error || "could not read the instrument list", true); return; }
+  inst = j; drawInst();
+}
+function drawInst() {
+  const on = inst.bots.filter(b => b.on).length;
+  $("instMode").innerHTML = (inst.installed ? `Bots on this machine place <b>${inst.live ? "DEMO ORDERS" : "no orders (dry run)"}</b>. ` : "<b>Not installed on this machine yet</b> (run SETUP.bat): switches are saved for then. ") +
+    `${on} switched on: up to ${on} positions at once, about ${on}% of the balance at risk. Switching off stops the bot; a position it already opened stays in MT5 with its stop and target.`;
+  $("instTable").innerHTML = `<tr><th>On</th><th>Instrument</th><th>Stop / target</th><th>Magic</th><th>Bot</th><th>Earlier backtest (with costs)</th></tr>` +
+    inst.bots.map(b => `<tr>
+      <td><button class="sw2 ${b.on ? "on" : ""}" data-name="${esc(b.name)}" data-on="${b.on ? 1 : 0}" title="switch ${b.on ? "off" : "on"}"></button></td>
+      <td><b>${esc(b.symbol)}</b>${b.name !== b.symbol ? ` <span class="muted">${esc(b.name)}</span>` : ""}</td>
+      <td class="num">${b.sl_atr} / ${b.tp_atr} ATR</td><td class="num">${b.magic}</td>
+      <td>${b.task === "Running" ? '<span style="color:var(--buy)">running</span>' : b.task === "Disabled" ? '<span class="muted">off</span>' : esc(b.task.toLowerCase())}</td>
+      <td class="muted">${esc(b.evidence)}</td></tr>`).join("");
+  document.querySelectorAll(".sw2").forEach(el => el.onclick = () => change({action: "toggle", name: el.dataset.name, on: el.dataset.on !== "1"}, el));
+}
+let busy = false;
+async function change(body, el) {
+  if (busy) return;
+  busy = true;
+  document.querySelectorAll(".sw2, #addForm button").forEach(x => x.disabled = true);
+  instMsg("working…");
+  try {
+    const r = await fetch("/api/instruments", {method: "POST", headers: {"Content-Type": "application/json", "X-Portal": "1"}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    inst = j; drawInst();
+    instMsg(body.action === "add" ? `${body.symbol.toUpperCase()} added and switched on.` : `${body.name} switched ${body.on ? "on" : "off"}.`);
+    if (body.action === "add") $("addSym").value = "";
+    setTimeout(refresh, 3000);
+  } catch (e) { instMsg(e.message, true); }
+  finally { busy = false; document.querySelectorAll(".sw2, #addForm button").forEach(x => x.disabled = false); }
+}
+$("instBtn").onclick = () => { const p = $("instPanel"), show = p.style.display === "none"; p.style.display = show ? "block" : "none"; if (show) loadInst(); };
+$("addForm").onsubmit = ev => { ev.preventDefault();
+  change({action: "add", symbol: $("addSym").value.trim(), sl_atr: +$("addSl").value, tp_atr: +$("addTp").value}); };
 
 async function refresh() {
   try { await loadBots(); await loadBot(); $("clock").textContent = "refreshed " + new Date().toLocaleTimeString() + " · every 30 s"; }
