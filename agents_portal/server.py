@@ -39,7 +39,7 @@ def find_bots(root: str) -> list[str]:
     out = []
     for name in sorted(os.listdir(root)):
         d = os.path.join(root, name)
-        if os.path.isdir(d) and os.path.isfile(os.path.join(d, "status.json")):
+        if not name.startswith("old_") and os.path.isdir(d) and os.path.isfile(os.path.join(d, "status.json")):  # old_*: archived
             out.append(name)
     return out
 
