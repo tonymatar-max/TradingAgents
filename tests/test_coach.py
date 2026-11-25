@@ -97,5 +97,44 @@ class Run(unittest.TestCase):
         self.assertIsNotNone(coach.load(self.root))
 
 
+class LlmSettings(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.env = os.environ.pop(coach.KEY_ENV, None)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+        if self.env is not None:
+            os.environ[coach.KEY_ENV] = self.env
+
+    def test_key_is_encrypted_never_shown_and_used(self):
+        secret = "sk-test-0123456789abcd"
+        pub = coach.save_llm_settings(self.root, "http://127.0.0.1:3001/v1", "gpt-oss-120b", secret)
+        self.assertNotIn(secret, json.dumps(pub))
+        self.assertEqual(pub["key_hint"], "…abcd")
+        with open(os.path.join(self.root, "coach", coach.SETTINGS)) as f:
+            self.assertNotIn(secret, f.read())                    # encrypted on disk
+        self.assertEqual(coach.load_llm_settings(self.root)["key"], secret)
+        coach.save_llm_settings(self.root, model="other")         # key=None keeps it
+        self.assertEqual(coach.load_llm_settings(self.root)["key"], secret)
+        seen = {}
+        def poster(url, headers, body, timeout):
+            seen.update(url=url, auth=headers.get("Authorization"), model=body["model"])
+            return {"choices": [{"message": {"content": '{"suggestions":[]}'}}]}
+        shutil.copy(os.path.join(ROOT, "bots.json"), self.root)
+        coach.run(self.root, url="http://ignored/v1", poster=poster, loader=lambda s: synthetic_xauusd(1600))
+        self.assertEqual(seen, {"url": "http://127.0.0.1:3001/v1/chat/completions", "auth": "Bearer " + secret, "model": "other"})
+        os.environ[coach.KEY_ENV] = "from-env"
+        self.assertEqual(coach.load_llm_settings(self.root)["key"], "from-env")
+        del os.environ[coach.KEY_ENV]
+        coach.save_llm_settings(self.root, key="")
+        self.assertEqual(coach.load_llm_settings(self.root)["key"], "")
+
+    def test_bad_values_rejected(self):
+        for kw in ({"url": "javascript:alert(1)"}, {"model": "a b"}, {"key": "has space"}):
+            with self.assertRaises(ValueError):
+                coach.save_llm_settings(self.root, **kw)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -166,10 +166,96 @@ def clean_suggestions(raw: list, bots: list[dict], limit: int = 3) -> list[dict]
     return out
 
 
-def ask_llm(summary: dict, url: str, model: str, timeout: float = 120.0, poster=None) -> tuple[list, str]:
+# ------------------------------------------------------------------ LLM settings (set in the portal)
+
+SETTINGS = "llm_settings.json"
+
+
+def _dpapi(data: bytes, protect: bool) -> bytes:
+    """Windows DPAPI (current user): only this Windows user on this machine can decrypt the key."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Blob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    buf = ctypes.create_string_buffer(data, len(data))
+    src, dst = Blob(len(data), buf), Blob()
+    fn = ctypes.windll.crypt32.CryptProtectData if protect else ctypes.windll.crypt32.CryptUnprotectData
+    if not fn(ctypes.byref(src), None, None, None, None, 0x1, ctypes.byref(dst)):   # 0x1 = no UI
+        raise OSError("Windows could not " + ("encrypt" if protect else "decrypt") + " the key")
+    try:
+        return ctypes.string_at(dst.pbData, dst.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(dst.pbData)
+
+
+def load_llm_settings(root: str) -> dict:
+    """{url, model, key}. The key: env AI_REVIEW_API_KEY wins, else the encrypted one saved from the portal."""
+    import base64
+    try:
+        with open(_path(root, SETTINGS), encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, ValueError):
+        raw = {}
+    key = os.environ.get(KEY_ENV, "")
+    if not key and raw.get("key_dpapi"):
+        try:
+            key = _dpapi(base64.b64decode(raw["key_dpapi"]), False).decode()
+        except (OSError, ValueError, AttributeError):
+            key = ""
+    return {"url": raw.get("url") or "", "model": raw.get("model") or "", "key": key}
+
+
+URL_RE = re.compile(r"^https?://[A-Za-z0-9.\-]+(:\d{1,5})?(/[A-Za-z0-9._~/\-]*)?$")
+
+
+def save_llm_settings(root: str, url: str | None = None, model: str | None = None, key: str | None = None) -> dict:
+    """Portal form. key=None keeps the saved key, key="" removes it. The key is never returned or logged."""
+    import base64
+    try:
+        with open(_path(root, SETTINGS), encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, ValueError):
+        raw = {}
+    if url is not None:
+        if url and not URL_RE.match(url):
+            raise ValueError("URL must look like http://127.0.0.1:3001/v1")
+        raw["url"] = url
+    if model is not None:
+        if model and not re.match(r"^[A-Za-z0-9._:/\-]{1,80}$", model):
+            raise ValueError("model: letters, digits and . _ : / - only")
+        raw["model"] = model
+    if key is not None:
+        if len(key) > 500 or any(c.isspace() for c in key):
+            raise ValueError("the key looks wrong (spaces or too long)")
+        if key:
+            raw["key_dpapi"] = base64.b64encode(_dpapi(key.encode(), True)).decode()
+            raw["key_hint"] = "…" + key[-4:] if len(key) >= 12 else "set"
+        else:
+            raw.pop("key_dpapi", None); raw.pop("key_hint", None)
+    tmp = _path(root, SETTINGS + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(raw, f)
+    os.replace(tmp, _path(root, SETTINGS))
+    return public_llm_settings(root)
+
+
+def public_llm_settings(root: str) -> dict:
+    """What the portal may show: never the key itself."""
+    try:
+        with open(_path(root, SETTINGS), encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, ValueError):
+        raw = {}
+    return {"url": raw.get("url") or "", "model": raw.get("model") or "", "key_saved": bool(raw.get("key_dpapi")),
+            "key_hint": raw.get("key_hint", ""), "key_in_env": bool(os.environ.get(KEY_ENV))}
+
+
+def ask_llm(summary: dict, url: str, model: str, timeout: float = 120.0, poster=None, key: str = "") -> tuple[list, str]:
     headers = {"Content-Type": "application/json"}
-    if os.environ.get(KEY_ENV):
-        headers["Authorization"] = "Bearer " + os.environ[KEY_ENV]
+    if key:
+        headers["Authorization"] = "Bearer " + key
     body = {"model": model, "temperature": 0.2, "max_tokens": 1200,
             "messages": [{"role": "system", "content": SYSTEM},
                          {"role": "user", "content": json.dumps(summary, default=str)}]}
@@ -210,9 +296,11 @@ def run(root: str, url: str = DEFAULT_URL, model: str = "auto", download: bool =
         b["backtest"] = cur
         summary["bots"].append({"bot": b["name"], "symbol": b["symbol"], "votes": b["votes"], "sl_atr": b["sl_atr"],
                                 "tp_atr": b["tp_atr"], "backtest_now": cur, "live": live_stats(root, b)})
+    st = load_llm_settings(root)                            # portal settings override the task's defaults
+    url, model = st["url"] or url, st["model"] or model
     out = {"created": now(), "model": model, "llm_ok": False, "items": [], "note": ""}
     try:
-        raw, out["model"] = ask_llm(summary, url, model, poster=poster)
+        raw, out["model"] = ask_llm(summary, url, model, poster=poster, key=st["key"])
         out["llm_ok"] = True
     except Exception as e:  # noqa: BLE001 - LLM offline: skip this week, change nothing
         out["note"] = f"LLM not reachable, skipped this week ({type(e).__name__}: {str(e)[:150]})"

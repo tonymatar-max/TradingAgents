@@ -181,9 +181,13 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length") or 0)
             req = json.loads(self.rfile.read(min(n, 10_000)) or b"{}")
             if u.path == "/api/coach":
-                if req.get("action") != "apply":
+                if req.get("action") == "apply":
+                    data = coach.apply(self.root, str(req.get("id", "")))
+                elif req.get("action") == "settings":
+                    opt = lambda k: None if req.get(k) is None else str(req.get(k)).strip()
+                    data = coach.save_llm_settings(self.root, opt("url"), opt("model"), opt("key"))
+                else:
                     raise ValueError("unknown action")
-                data = coach.apply(self.root, str(req.get("id", "")))
             elif req.get("action") == "toggle":
                 name = str(req.get("name", ""))
                 if not NAME_RE.match(name):
@@ -203,7 +207,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 raise ValueError("unknown action")
             return self._send(200, json.dumps(data).encode(), "application/json")
-        except (ValueError, RuntimeError, subprocess.TimeoutExpired) as e:
+        except (ValueError, OSError, RuntimeError, subprocess.TimeoutExpired) as e:
             return self._send(400, json.dumps({"error": str(e)}).encode(), "application/json")
 
     def log_message(self, *args):
@@ -227,6 +231,8 @@ class Handler(BaseHTTPRequestHandler):
                 data = [bot_summary(self.root, n) for n in find_bots(self.root)]
             elif u.path == "/api/instruments":
                 data = self.toggle(self.root, ["-List"])
+            elif u.path == "/api/coach/settings":
+                data = coach.public_llm_settings(self.root)
             elif u.path == "/api/coach":
                 data = coach.load(self.root)
                 if data is None:

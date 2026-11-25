@@ -92,6 +92,14 @@ th{color:var(--muted);font-weight:600;border-top:0}
     <h2>Strategy coach · weekly LLM suggestions, backtested, applied only when you click</h2>
     <div class="muted" style="font-size:12px;margin-bottom:8px">A suggestion passes only if its profit factor is above 1 and better than now in BOTH halves of ~2 years of H1 history (30+ trades each).
       The LLM's ideas are judged on the same data, so a pass is weak evidence, not proof. Apply changes that bot's votes / stop / target for new trades only (demo account).</div>
+    <form id="llmForm" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:10px">
+      <label>LLM address<br><input id="llmUrl" maxlength="200" placeholder="http://127.0.0.1:3001/v1" style="width:230px"></label>
+      <label>Model<br><input id="llmModel" maxlength="80" placeholder="gpt-oss-120b" style="width:150px"></label>
+      <label>API key <span id="llmKeyState" class="muted"></span><br><input id="llmKey" type="password" autocomplete="off" maxlength="500" placeholder="leave empty to keep" style="width:200px"></label>
+      <button class="btn" type="submit">Save</button>
+      <button class="btn" type="button" id="llmKeyDel">Remove key</button>
+      <span class="muted" style="font-size:12px">Saved encrypted for this Windows user on this machine; never shown again.</span>
+    </form>
     <div id="coachHead" class="muted"></div>
     <div style="overflow-x:auto"><table id="coachTable"></table></div>
     <div id="coachMsg" style="margin-top:8px"></div>
@@ -423,7 +431,22 @@ async function applyCoach(b) {
     coachMsg(`${b.dataset.bot} updated. The bot picks it up within a minute.`); loadCoach();
   } catch (e) { coachMsg(e.message, true); b.disabled = false; }
 }
-$("coachBtn").onclick = () => { const p = $("coachPanel"), show = p.style.display === "none"; p.style.display = show ? "block" : "none"; if (show) loadCoach(); };
+async function loadLlm() {
+  const r = await fetch("/api/coach/settings"); const j = await r.json(); if (!r.ok) return;
+  $("llmUrl").value = j.url; $("llmModel").value = j.model;
+  $("llmKeyState").textContent = j.key_in_env ? "(set in Windows environment)" : j.key_saved ? `(saved ${j.key_hint})` : "(none saved)";
+}
+async function saveLlm(body) {
+  try {
+    const r = await fetch("/api/coach", {method: "POST", headers: {"Content-Type": "application/json", "X-Portal": "1"}, body: JSON.stringify({action: "settings", ...body})});
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText);
+    $("llmKey").value = ""; coachMsg("LLM settings saved. Used from the next coach run."); loadLlm();
+  } catch (e) { coachMsg(e.message, true); }
+}
+$("llmForm").onsubmit = ev => { ev.preventDefault(); const b = {url: $("llmUrl").value.trim(), model: $("llmModel").value.trim()};
+  if ($("llmKey").value.trim()) b.key = $("llmKey").value.trim(); saveLlm(b); };
+$("llmKeyDel").onclick = () => { if (confirm("Remove the saved API key?")) saveLlm({key: ""}); };
+$("coachBtn").onclick = () => { const p = $("coachPanel"), show = p.style.display === "none"; p.style.display = show ? "block" : "none"; if (show) { loadCoach(); loadLlm(); } };
 
 async function refresh() {
   try { await loadBots(); await loadBot(); $("clock").textContent = "refreshed " + new Date().toLocaleTimeString() + " · every 30 s"; }
