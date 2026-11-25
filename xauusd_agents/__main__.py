@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 
+
 import pandas as pd
 
 from .backtest import Config, run_backtest
@@ -12,7 +13,7 @@ from .data import load_csv, synthetic_xauusd
 
 def main():
     p = argparse.ArgumentParser(prog="xauusd_agents")
-    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal", "agentstats", "parity", "reportcheck", "aireport", "lossreport", "walkforward"])
+    p.add_argument("cmd", choices=["demo", "backtest", "signal", "mt5", "export", "optimize", "news", "tfscan", "confluence", "servertime", "newsbrief", "portal", "agentstats", "parity", "reportcheck", "aireport", "lossreport", "walkforward", "coach"])
     p.add_argument("--csv", help="OHLC csv (time,open,high,low,close)")
     p.add_argument("--threshold", type=float, default=0.8, help="fraction of agents that must agree")
     p.add_argument("--risk", type=float, default=0.01)
@@ -37,6 +38,8 @@ def main():
                    help="mt5: AI second opinion before an entry. shadow = log only (start here), veto = a VETO blocks the trade. Fails open. Key from env AI_REVIEW_API_KEY")
     p.add_argument("--ai-url", default="http://localhost:3001/v1", help="OpenAI-compatible base URL for --ai-review")
     p.add_argument("--ai-model", default="auto", help="model id for --ai-review")
+    p.add_argument("--root", default=".", help="coach: folder that holds bots.json and the bots' log folders")
+    p.add_argument("--no-download", action="store_true", help="coach: do not refresh history from MT5, use saved CSVs")
     p.add_argument("--magic", type=int, default=26001, help="mt5: order tag; use a different one per bot when running several")
     p.add_argument("--tfs", default="M15,M30,H1,H4", help="tfscan: comma list of timeframes")
     p.add_argument("--htf-min", type=int, default=0, help="require >= N of 10 agents on the higher timeframe to agree (0 = off)")
@@ -161,6 +164,17 @@ def main():
         print(f"  committee vote counts identical on {res['same_vote_counts_%']}% of candles")
         for t, name, ea_v, py_v in res["examples"][:10]:
             print(f"  e.g. {t} {name}: EA {ea_v:+d} vs Python {py_v:+d}")
+        return
+
+    if a.cmd == "coach":
+        from os.path import abspath
+        from .coach import run as coach_run
+        res = coach_run(abspath(a.root), a.ai_url, a.ai_model, download=not a.no_download)
+        print(res["note"] or f"LLM {res['model']}: {len(res['items'])} suggestion(s)")
+        for it in res["items"]:
+            print(f"  {it['bot']:8s} {it['now']} -> {it['change']}  {'PASSED' if it['passed'] else 'failed'}: {it['verdict']}")
+            print(f"           why: {it['reason']}")
+        print("Review and apply in the agents portal (Suggestions). Nothing was changed.")
         return
 
     if a.cmd in ("lossreport", "walkforward"):

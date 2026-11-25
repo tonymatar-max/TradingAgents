@@ -70,6 +70,7 @@ th{color:var(--muted);font-weight:600;border-top:0}
   <h1>Committee Agents</h1>
   <span class="sub">read-only view of the running bots · demo / dry run</span>
   <span class="right" id="clock"></span>
+  <button id="coachBtn" class="btn">Suggestions</button>
   <button id="instBtn" class="btn">Instruments</button>
 </header>
 <div class="wrap">
@@ -86,6 +87,14 @@ th{color:var(--muted);font-weight:600;border-top:0}
       <span class="muted" style="font-size:12px">An added instrument has no backtest behind it: treat it as a demo experiment.</span>
     </form>
     <div id="instMsg" style="margin-top:8px"></div>
+  </div>
+  <div class="card" id="coachPanel" style="display:none;margin-bottom:14px">
+    <h2>Strategy coach · weekly LLM suggestions, backtested, applied only when you click</h2>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">A suggestion passes only if its profit factor is above 1 and better than now in BOTH halves of ~2 years of H1 history (30+ trades each).
+      The LLM's ideas are judged on the same data, so a pass is weak evidence, not proof. Apply changes that bot's votes / stop / target for new trades only (demo account).</div>
+    <div id="coachHead" class="muted"></div>
+    <div style="overflow-x:auto"><table id="coachTable"></table></div>
+    <div id="coachMsg" style="margin-top:8px"></div>
   </div>
   <div class="warnbar" id="warn"></div>
   <div id="orbView" style="display:none">
@@ -388,6 +397,33 @@ async function change(body, el) {
 $("instBtn").onclick = () => { const p = $("instPanel"), show = p.style.display === "none"; p.style.display = show ? "block" : "none"; if (show) loadInst(); };
 $("addForm").onsubmit = ev => { ev.preventDefault();
   change({action: "add", symbol: $("addSym").value.trim(), sl_atr: +$("addSl").value, tp_atr: +$("addTp").value}); };
+
+// ---------------------------------------------------------------- strategy coach panel
+const fmtSet = s => `${s.votes}/10 · stop ${s.sl_atr} · target ${s.tp_atr}`;
+const fmtBt = b => ["first", "second"].map(h => `PF ${b[h].pf ?? "–"} (${b[h].n})`).join(" / ");
+function coachMsg(text, bad) { $("coachMsg").innerHTML = text ? `<span style="color:${bad ? "var(--sell)" : "var(--buy)"}">${esc(text)}</span>` : ""; }
+async function loadCoach() {
+  const r = await fetch("/api/coach"); const j = await r.json();
+  if (!r.ok) { $("coachHead").textContent = j.error || "no suggestions yet"; $("coachTable").innerHTML = ""; return; }
+  $("coachHead").innerHTML = `Last run ${esc(new Date(j.created * 1000).toLocaleString())} · model ${esc(j.model)}` + (j.note ? ` · <b>${esc(j.note)}</b>` : "");
+  $("coachTable").innerHTML = !j.items.length ? "" : `<tr><th>Bot</th><th>Now</th><th>Suggested</th><th>Why (LLM)</th><th>Backtest now (1st / 2nd half)</th><th>Backtest suggested</th><th>Result</th><th></th></tr>` +
+    j.items.map(i => `<tr><td><b>${esc(i.bot)}</b></td><td class="num">${fmtSet(i.now)}</td><td class="num">${fmtSet(i.change)}</td>
+      <td class="muted" style="max-width:280px">${esc(i.reason)}</td><td class="num">${fmtBt(i.backtest_now)}</td><td class="num">${fmtBt(i.backtest_new)}</td>
+      <td style="color:${i.passed ? "var(--buy)" : "var(--sell)"}">${i.passed ? "passed" : "failed"}: ${esc(i.verdict)}</td>
+      <td>${i.applied ? `<span class="muted">applied ${esc(new Date(i.applied * 1000).toLocaleDateString())}</span>` : i.passed ? `<button class="btn applyBtn" data-id="${esc(i.id)}" data-bot="${esc(i.bot)}">Apply</button>` : ""}</td></tr>`).join("");
+  document.querySelectorAll(".applyBtn").forEach(b => b.onclick = () => applyCoach(b));
+}
+async function applyCoach(b) {
+  if (!confirm(`Change ${b.dataset.bot}'s settings as suggested? New trades only, demo account.`)) return;
+  b.disabled = true;
+  try {
+    const r = await fetch("/api/coach", {method: "POST", headers: {"Content-Type": "application/json", "X-Portal": "1"}, body: JSON.stringify({action: "apply", id: b.dataset.id})});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    coachMsg(`${b.dataset.bot} updated. The bot picks it up within a minute.`); loadCoach();
+  } catch (e) { coachMsg(e.message, true); b.disabled = false; }
+}
+$("coachBtn").onclick = () => { const p = $("coachPanel"), show = p.style.display === "none"; p.style.display = show ? "block" : "none"; if (show) loadCoach(); };
 
 async function refresh() {
   try { await loadBots(); await loadBot(); $("clock").textContent = "refreshed " + new Date().toLocaleTimeString() + " · every 30 s"; }

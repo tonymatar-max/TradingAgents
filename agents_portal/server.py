@@ -22,6 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 from xauusd_agents.agents import default_agents  # noqa: E402
+from xauusd_agents import coach  # noqa: E402
 from xauusd_agents.data import load_csv  # noqa: E402
 
 STALE_AFTER_S = 2 * 3600  # an H1 bot updates at least every hour
@@ -171,7 +172,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
-        if u.path != "/api/instruments":
+        if u.path not in ("/api/instruments", "/api/coach"):
             return self._send(404, b"not found", "text/plain")
         why = self._may_change()
         if why:
@@ -179,7 +180,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             n = int(self.headers.get("Content-Length") or 0)
             req = json.loads(self.rfile.read(min(n, 10_000)) or b"{}")
-            if req.get("action") == "toggle":
+            if u.path == "/api/coach":
+                if req.get("action") != "apply":
+                    raise ValueError("unknown action")
+                data = coach.apply(self.root, str(req.get("id", "")))
+            elif req.get("action") == "toggle":
                 name = str(req.get("name", ""))
                 if not NAME_RE.match(name):
                     raise ValueError("bad name")
@@ -222,6 +227,10 @@ class Handler(BaseHTTPRequestHandler):
                 data = [bot_summary(self.root, n) for n in find_bots(self.root)]
             elif u.path == "/api/instruments":
                 data = self.toggle(self.root, ["-List"])
+            elif u.path == "/api/coach":
+                data = coach.load(self.root)
+                if data is None:
+                    return self._send(404, b'{"error":"no suggestions yet: the coach runs weekly (Svc-Coach), or run: python -m xauusd_agents coach"}', "application/json")
             elif u.path == "/api/orb":
                 data = orb_detail(self.root)
                 if data is None:

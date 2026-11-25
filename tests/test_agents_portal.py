@@ -115,6 +115,23 @@ class Instruments(unittest.TestCase):
             self.assertEqual(self.post(body)[0], 400, body)
         self.assertEqual(self.calls, [])
 
+    def test_coach_endpoints(self):
+        with self.assertRaises(urllib.error.HTTPError) as c:
+            urllib.request.urlopen(self.base + "/api/coach")
+        self.assertEqual(c.exception.code, 404)                    # no run yet
+        from xauusd_agents import coach
+        coach.save(server.Handler.root, {"created": 1, "model": "m", "items": [{"id": "1-0", "passed": False, "applied": None}]})
+        self.assertEqual(json.loads(urllib.request.urlopen(self.base + "/api/coach").read())["model"], "m")
+        req = urllib.request.Request(self.base + "/api/coach", json.dumps({"action": "apply", "id": "1-0"}).encode(),
+                                     {"Content-Type": "application/json", "X-Portal": "1"}, method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as c:
+            urllib.request.urlopen(req)
+        self.assertEqual(c.exception.code, 400)                    # failed suggestions cannot be applied
+        req.remove_header("X-portal")
+        with self.assertRaises(urllib.error.HTTPError) as c:
+            urllib.request.urlopen(req)
+        self.assertEqual(c.exception.code, 403)
+
     def test_other_websites_cannot_change_anything(self):
         self.assertEqual(self.post({"action": "toggle", "name": "NVDA", "on": False}, {"Content-Type": "application/json"})[0], 403)
         self.assertEqual(self.post({"action": "toggle", "name": "NVDA", "on": False},
