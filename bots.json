@@ -1,0 +1,17 @@
+{
+  "_readme": "Committee bots (9 of 10 agents must agree). Switch one with: powershell -ExecutionPolicy Bypass -File scripts\\toggle_bot.ps1 -Name GBPUSD -Off  (or -On). 'evidence' = earlier H1 backtest with Exness costs, profit factor train / test (above 1 = profitable). DEMO only.",
+  "risk": 0.01,
+  "threshold": 0.9,
+  "bots": [
+    {"name": "USTEC",  "symbol": "USTEC",  "sl_atr": 1.5, "tp_atr": 2.0, "magic": 26005, "logdir": "logs_ustec",   "enabled": true,  "evidence": "PF 1.15 / 1.20, passed both halves"},
+    {"name": "GoldV2", "symbol": "XAUUSD", "sl_atr": 1.0, "tp_atr": 3.0, "magic": 26006, "logdir": "logs_gold_v2", "enabled": true,  "evidence": "PF 1.62 / 1.02, weak since July"},
+    {"name": "XAGUSD", "symbol": "XAGUSD", "sl_atr": 1.5, "tp_atr": 2.0, "magic": 26011, "logdir": "logs_xagusd",  "enabled": true,  "evidence": "PF 1.09 / 1.07, thin edge"},
+    {"name": "GBPUSD", "symbol": "GBPUSD", "sl_atr": 1.5, "tp_atr": 4.0, "magic": 26012, "logdir": "logs_gbpusd",  "enabled": true,  "evidence": "PF 1.13 / 1.15, passed both halves"},
+    {"name": "NVDA",   "symbol": "NVDA",   "sl_atr": 1.5, "tp_atr": 2.0, "magic": 26013, "logdir": "logs_nvda",    "enabled": true,  "evidence": "PF 1.01 / 1.10, barely break-even"},
+    {"name": "AAPL",   "symbol": "AAPL",   "sl_atr": 1.5, "tp_atr": 2.0, "magic": 26014, "logdir": "logs_aapl",    "enabled": false, "evidence": "PF 0.85 / 1.25, lost in the first half"},
+    {"name": "US500",  "symbol": "US500",  "sl_atr": 1.0, "tp_atr": 2.0, "magic": 26015, "logdir": "logs_us500",   "enabled": false, "evidence": "PF 0.86 / 1.04, lost in the first half"},
+    {"name": "USOIL",  "symbol": "USOIL",  "sl_atr": 1.0, "tp_atr": 3.0, "magic": 26016, "logdir": "logs_usoil",   "enabled": false, "evidence": "PF 0.91 / 1.18, lost in the first half"},
+    {"name": "EURUSD", "symbol": "EURUSD", "sl_atr": 1.5, "tp_atr": 2.0, "magic": 26017, "logdir": "logs_eurusd",  "enabled": false, "evidence": "PF 1.30 / 0.81, lost in the test half"},
+    {"name": "USDJPY", "symbol": "USDJPY", "sl_atr": 1.5, "tp_atr": 2.0, "magic": 26018, "logdir": "logs_usdjpy",  "enabled": false, "evidence": "PF 0.86 / 0.86, lost in both halves"}
+  ]
+}

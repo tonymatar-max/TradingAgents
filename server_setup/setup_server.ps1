@@ -2,9 +2,8 @@
 #   Installs Python 3.12 + Git (if missing), gets/updates the bot code (branch below), installs packages,
 #   checks MetaTrader 5, removes the old Bot-* tasks, then runs scripts\install_services.ps1 which registers:
 #     Svc-MT5     MetaTrader 5 at logon
-#     Svc-USTEC   USTEC committee bot    (demo orders with -LiveOrders, else dry run)
-#     Svc-GoldV2  gold v2 committee bot  (demo orders with -LiveOrders, else dry run)
-#     Svc-ORB     ORB bot                (ALWAYS dry run)
+#     Svc-<name>  one task per committee bot in bots.json (9 of 10 agents; demo orders with -LiveOrders, else dry run)
+#                 switch one on/off later: scripts\toggle_bot.ps1 -Name GBPUSD -Off   (or -On, -List)
 #     Svc-Portal  agents portal          http://127.0.0.1:8780 on this server
 #
 #   Double-click SETUP.bat (dry run)  or  run:  .\SETUP.bat live   (demo orders)

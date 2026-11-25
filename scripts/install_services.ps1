@@ -1,4 +1,4 @@
-# Runs everything "like a service" on this PC: MetaTrader 5, the USTEC and gold v2 committee bots, and the agents portal.
+# Runs everything "like a service": MetaTrader 5, every ENABLED committee bot in bots.json, and the agents portal.
 #
 # Why scheduled tasks and not Windows services: the MetaTrader5 Python package can only talk to an MT5 terminal running
 # on the logged-in desktop. A real Windows service runs in a hidden session (session 0) where that does not work.
@@ -6,10 +6,11 @@
 #
 #   Install:    powershell -ExecutionPolicy Bypass -File scripts\install_services.ps1
 #   Dry run:    ... -File scripts\install_services.ps1 -DryRun        (bots log signals, place no orders)
+#   On / off:   powershell -ExecutionPolicy Bypass -File scripts\toggle_bot.ps1 -Name GBPUSD -Off   (or -On; -List)
 #   Status:     Get-ScheduledTask Svc-* | Select TaskName,State
-#   Stop one:   Stop-ScheduledTask Svc-USTEC ; Disable-ScheduledTask Svc-USTEC
 #   Remove all: powershell -ExecutionPolicy Bypass -File scripts\install_services.ps1 -Uninstall
 #
+# Bot list: bots.json (in git). Your on/off choices: bots.local.json (this machine only, not in git).
 # DEMO only: the bots refuse a non-demo account. Never run the same bot (same magic) on two machines on one account.
 param(
     [switch]$DryRun,
@@ -26,7 +27,6 @@ if ($Uninstall) {
         Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false
         Write-Host "Removed $($_.TaskName)"
     }
-    Write-Host "Note: bots already running keep running until you close their windows or log off."
     return
 }
 
@@ -34,10 +34,19 @@ $py = if ($Python) { $Python } else { (Get-Command python -ErrorAction Stop).Sou
 & $py -c "import MetaTrader5, pandas, numpy" 2>$null
 if ($LASTEXITCODE -ne 0) { throw "python ($py) is missing MetaTrader5/pandas/numpy. Run: python -m pip install -r requirements.txt MetaTrader5" }
 
-$Bots = @(
-    @{ Name = "USTEC";  Args = @("--symbol","USTEC","--threshold","0.9","--sl-atr","1.5","--tp-atr","2.0","--risk","0.01","--magic","26005"); Log = "logs_ustec" },
-    @{ Name = "GoldV2"; Args = @("--symbol","XAUUSD","--threshold","0.9","--sl-atr","1.0","--tp-atr","3.0","--risk","0.01","--magic","26006"); Log = "logs_gold_v2" }
-)
+# ---- bot list + this machine's on/off choices
+$cfg = Get-Content (Join-Path $Root "bots.json") -Raw | ConvertFrom-Json
+$localFile = Join-Path $Root "bots.local.json"
+$local = @{}
+if (Test-Path $localFile) { (Get-Content $localFile -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $local[$_.Name] = [bool]$_.Value } }
+function Test-Enabled($b) { if ($local.ContainsKey($b.name)) { $local[$b.name] } else { [bool]$b.enabled } }
+
+# ---- the ORB bot is retired: remove its task if an older install created it
+if (Get-ScheduledTask -TaskName "Svc-ORB" -ErrorAction SilentlyContinue) {
+    Stop-ScheduledTask -TaskName "Svc-ORB" -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName "Svc-ORB" -Confirm:$false
+    Write-Host "Removed Svc-ORB (ORB bot retired)"
+}
 
 # ---- launchers: each loops forever, restarting 30 s after any exit
 $run = Join-Path $Root "scripts\services"
@@ -57,55 +66,57 @@ while (`$true) {
     return $file
 }
 
-$launchers = @{}
-foreach ($b in $Bots) {
-    $logdir = Join-Path $Root $b.Log
-    $flags = ($b.Args + @("--logdir", "`"$logdir`"", "--log-file", "`"$logdir\bot.log`"")) -join " "
-    if (-not $DryRun) { $flags += " --live-orders" }
-    $launchers[$b.Name] = Write-Launcher $b.Name $logdir "& `"$py`" -m xauusd_agents mt5 $flags"
-}
-$portalLog = Join-Path $Root "logs_portal"
-$launchers["Portal"] = Write-Launcher "Portal" $portalLog "& `"$py`" agents_portal\server.py --port $PortalPort --root `"$Root`""
-# ORB: same mode as the committee bots (demo orders unless -DryRun). Its own guards: $50 max loss per trade,
-# max 3 trades and -$150 per day, flat at 15:55 New York, refuses a non-demo account. It lost money in the 2026 replay.
-$orbLog = Join-Path $Root "orb_bot\logs"
-$orbLive = if ($DryRun) { "" } else { " --live-orders" }
-$launchers["ORB"] = Write-Launcher "ORB" $orbLog "Set-Location `"$Root\orb_bot`"; & `"$py`" orb_bot.py$orbLive"
-
-# ---- MT5 terminal
-$mt5 = @("$env:ProgramFiles\MetaTrader 5 EXNESS\terminal64.exe", "$env:ProgramFiles\MetaTrader 5\terminal64.exe") +
-       (Get-ChildItem "$env:ProgramFiles" -Filter terminal64.exe -Recurse -Depth 2 -ErrorAction SilentlyContinue | ForEach-Object FullName) |
-       Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-
 # ---- tasks (current user, at logon, never time out, restart on failure)
 $user = "$env:USERDOMAIN\$env:USERNAME"
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1)
+function Register-Svc($name, $launcher, $enabled, $delay) {
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    if ($delay) { $trigger.Delay = "PT1M" }     # give MT5 a minute to log in
+    Register-ScheduledTask -TaskName "Svc-$name" -Principal $principal -Settings $settings -Trigger $trigger -Force `
+        -Action (New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $Root `
+            -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File `"$launcher`"") | Out-Null
+    if ($enabled) {
+        Enable-ScheduledTask -TaskName "Svc-$name" | Out-Null
+        Start-ScheduledTask -TaskName "Svc-$name"
+    } else {
+        Stop-ScheduledTask -TaskName "Svc-$name" -ErrorAction SilentlyContinue
+        Disable-ScheduledTask -TaskName "Svc-$name" | Out-Null
+    }
+}
 
+$mt5 = @("$env:ProgramFiles\MetaTrader 5 EXNESS\terminal64.exe", "$env:ProgramFiles\MetaTrader 5\terminal64.exe") +
+       (Get-ChildItem "$env:ProgramFiles" -Filter terminal64.exe -Recurse -Depth 2 -ErrorAction SilentlyContinue | ForEach-Object FullName) |
+       Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 if ($mt5) {
     Register-ScheduledTask -TaskName "Svc-MT5" -Principal $principal -Settings $settings -Force `
         -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $user) -Action (New-ScheduledTaskAction -Execute $mt5) | Out-Null
-    Write-Host "Svc-MT5     : starts MetaTrader 5 at logon ($mt5)"
+    Write-Host "Svc-MT5      : starts MetaTrader 5 at logon ($mt5)"
 } else {
     Write-Warning "terminal64.exe not found: start MT5 yourself after each logon."
 }
 
-foreach ($name in @("USTEC", "GoldV2", "Portal", "ORB")) {
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-    if ($name -ne "Portal") { $trigger.Delay = "PT1M" }   # give MT5 a minute to log in
-    Register-ScheduledTask -TaskName "Svc-$name" -Principal $principal -Settings $settings -Trigger $trigger -Force `
-        -Action (New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $Root `
-            -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File `"$($launchers[$name])`"") | Out-Null
-    Start-ScheduledTask -TaskName "Svc-$name"
-    Write-Host ("Svc-{0,-7}: started now and at every logon" -f $name)
+$live = if ($DryRun) { "" } else { " --live-orders" }
+foreach ($b in $cfg.bots) {
+    $logdir = Join-Path $Root $b.logdir
+    $flags = "--symbol $($b.symbol) --timeframe H1 --threshold $($cfg.threshold) --sl-atr $($b.sl_atr) --tp-atr $($b.tp_atr) " +
+             "--risk $($cfg.risk) --magic $($b.magic) --logdir `"$logdir`" --log-file `"$logdir\bot.log`"$live"
+    $launcher = Write-Launcher $b.name $logdir "& `"$py`" -m xauusd_agents mt5 $flags"
+    $on = Test-Enabled $b
+    Register-Svc $b.name $launcher $on $true
+    Write-Host ("Svc-{0,-8}: {1,-3}  {2} 9/10, stop {3} ATR, target {4} ATR, magic {5}   ({6})" -f $b.name, $(if ($on) {"ON"} else {"off"}), $b.symbol, $b.sl_atr, $b.tp_atr, $b.magic, $b.evidence)
 }
 
+$portalLog = Join-Path $Root "logs_portal"
+Register-Svc "Portal" (Write-Launcher "Portal" $portalLog "& `"$py`" agents_portal\server.py --port $PortalPort --root `"$Root`"") $true $false
+Write-Host "Svc-Portal  : ON   http://127.0.0.1:$PortalPort"
+
+$n = @($cfg.bots | Where-Object { Test-Enabled $_ }).Count
 Write-Host @"
 
-Mode: $(if ($DryRun) { 'DRY RUN (no orders)' } else { 'LIVE ORDERS on the DEMO account' }) for USTEC, gold v2 and ORB
-Portal: http://127.0.0.1:$PortalPort
-Logs:   logs_ustec\bot.log, logs_gold_v2\bot.log, crash.log in each folder
-Close any bot windows you started by hand, or the same bot runs twice (the task ignores a second copy of itself, not yours).
+Mode: $(if ($DryRun) { 'DRY RUN (no orders)' } else { 'LIVE ORDERS on the DEMO account' }). $n bots ON, each risking $([int]($cfg.risk * 100))% per trade:
+up to $n positions can be open at once (about $($n * [int]($cfg.risk * 100))% of the balance at risk in total).
+Switch a bot: powershell -ExecutionPolicy Bypass -File scripts\toggle_bot.ps1 -Name GBPUSD -Off   (or -On, or -List)
 For restarts without you: set Windows to sign in automatically, and lock the screen instead of logging off.
 "@

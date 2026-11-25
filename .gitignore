@@ -11,3 +11,4 @@ result_*.txt*
 multi_symbol/out.txt
 multi_symbol/results_sweeps.json
 .claude/
+bots.local.json
