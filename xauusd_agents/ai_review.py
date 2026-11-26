@@ -20,7 +20,7 @@ import time
 import urllib.request
 from dataclasses import dataclass
 
-DEFAULT_URL = "http://localhost:3001/v1"
+DEFAULT_URL = "http://127.0.0.1:3001/v1"
 KEY_ENV = "AI_REVIEW_API_KEY"
 
 SYSTEM = (

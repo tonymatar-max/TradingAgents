@@ -36,7 +36,7 @@ def main():
     p.add_argument("--news-after", type=int, default=30, help="minutes after an event")
     p.add_argument("--ai-review", choices=["off", "shadow", "veto"], default="off",
                    help="mt5: AI second opinion before an entry. shadow = log only (start here), veto = a VETO blocks the trade. Fails open. Key from env AI_REVIEW_API_KEY")
-    p.add_argument("--ai-url", default="http://localhost:3001/v1", help="OpenAI-compatible base URL for --ai-review")
+    p.add_argument("--ai-url", default="http://127.0.0.1:3001/v1", help="OpenAI-compatible base URL for --ai-review")
     p.add_argument("--ai-model", default="auto", help="model id for --ai-review")
     p.add_argument("--root", default=".", help="coach: folder that holds bots.json and the bots' log folders")
     p.add_argument("--no-download", action="store_true", help="coach: do not refresh history from MT5, use saved CSVs")
