@@ -130,6 +130,11 @@ class LlmSettings(unittest.TestCase):
         coach.save_llm_settings(self.root, key="")
         self.assertEqual(coach.load_llm_settings(self.root)["key"], "")
 
+    def test_address_without_v1_gets_it(self):
+        self.assertEqual(coach.api_base("http://127.0.0.1:3001"), "http://127.0.0.1:3001/v1")
+        self.assertEqual(coach.api_base("http://127.0.0.1:3001/v1/"), "http://127.0.0.1:3001/v1")
+        self.assertEqual(coach.api_base("https://x.example/api/openai"), "https://x.example/api/openai")
+
     def test_bad_values_rejected(self):
         for kw in ({"url": "javascript:alert(1)"}, {"model": "a b"}, {"key": "has space"}):
             with self.assertRaises(ValueError):

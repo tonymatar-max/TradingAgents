@@ -252,6 +252,13 @@ def public_llm_settings(root: str) -> dict:
             "key_hint": raw.get("key_hint", ""), "key_in_env": bool(os.environ.get(KEY_ENV))}
 
 
+def api_base(url: str) -> str:
+    """'http://127.0.0.1:3001' -> 'http://127.0.0.1:3001/v1' (OpenAI-compatible servers live under /v1)."""
+    from urllib.parse import urlparse
+    url = url.strip().rstrip("/")
+    return url + "/v1" if urlparse(url).path in ("", "/") else url
+
+
 def ask_llm(summary: dict, url: str, model: str, timeout: float = 120.0, poster=None, key: str = "") -> tuple[list, str]:
     headers = {"Content-Type": "application/json"}
     if key:
@@ -259,7 +266,7 @@ def ask_llm(summary: dict, url: str, model: str, timeout: float = 120.0, poster=
     body = {"model": model, "temperature": 0.2, "max_tokens": 1200,
             "messages": [{"role": "system", "content": SYSTEM},
                          {"role": "user", "content": json.dumps(summary, default=str)}]}
-    res = (poster or _http_post)(url.rstrip("/") + "/chat/completions", headers, body, timeout)
+    res = (poster or _http_post)(api_base(url) + "/chat/completions", headers, body, timeout)
     return parse_suggestions(res["choices"][0]["message"]["content"]), str(res.get("model", model))
 
 
